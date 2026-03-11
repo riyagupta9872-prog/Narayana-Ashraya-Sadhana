@@ -233,6 +233,7 @@
         /* Modals */
         .modal-overlay { position: fixed; inset: 0; background: rgba(0,0,0,0.72); display: flex; justify-content: center; align-items: center; z-index: 999; padding: 16px; }
         .modal-box { background: white; width: 100%; max-width: 900px; padding: 24px; border-radius: 14px; max-height: 92vh; overflow-y: auto; position: relative; }
+        .modal-box.guide { overflow-y: hidden; display: flex; flex-direction: column; }
         .modal-box.sm  { max-width: 420px; }
         .modal-box.md  { max-width: 540px; }
         .modal-close { position: absolute; right: 16px; top: 12px; font-size: 24px; cursor: pointer; color: #aaa; background: none; border: none; width: auto; padding: 4px 8px; margin: 0; line-height: 1; }
@@ -890,11 +891,16 @@ function highlightUserLevelTab(level) {
             </div>
         </div>
 
-        <!-- ── NAV TABS ── -->
-        <div class="nav-tabs" style="margin-bottom:16px;">
-            <button class="tab-btn active" onclick="switchTab('sadhana')">Daily Entry</button>
-            <button class="tab-btn"        onclick="switchTab('reports')">My Reports</button>
-            <button class="tab-btn"        onclick="switchTab('progress')">My Progress</button>
+        <!-- NAV TABS -->
+        <div class="nav-tabs" id="main-nav-tabs" style="margin-bottom:16px;">
+            <!-- User tabs -->
+            <button class="tab-btn user-tab active" onclick="switchTab('sadhana')">Daily Entry</button>
+            <button class="tab-btn user-tab"        onclick="switchTab('reports')">My Reports</button>
+            <button class="tab-btn user-tab"        onclick="switchTab('progress')">My Progress</button>
+            <!-- Admin tabs -->
+            <button class="tab-btn admin-tab hidden" onclick="switchTab('admin-reports')">Reports</button>
+            <button class="tab-btn admin-tab hidden" onclick="switchTab('admin')">User Management</button>
+            <button class="tab-btn admin-tab hidden" onclick="switchTab('inactive')">Inactive Devotees</button>
         </div>
 
         <!-- SADHANA ENTRY -->
@@ -1002,6 +1008,11 @@ function highlightUserLevelTab(level) {
                         <button onclick="downloadMasterReport()" class="btn-success btn-sm" style="width:auto;padding:8px 18px;">&#11015; Master Excel</button>
                     </div>
                     <div class="card" style="overflow-x:auto;overflow-y:auto;max-height:70vh;">
+                        <div style="display:flex;gap:8px;flex-wrap:wrap;align-items:center;margin-bottom:12px;">
+                            <select id="reports-filter-dept"  onchange="updateFilterTeams('reports')" style="margin:0;width:auto;flex-shrink:0;padding:8px 10px;font-size:12px;border-radius:8px;border:1px solid #ddd;"><option value="">All Depts</option><option value="IGF">IGF</option><option value="IYF">IYF</option><option value="ICF_MTG">ICF_MTG</option><option value="ICF_PRJI">ICF_PRJI</option></select>
+                            <select id="reports-filter-level" onchange="filterReports()" style="margin:0;width:auto;flex-shrink:0;padding:8px 10px;font-size:12px;border-radius:8px;border:1px solid #ddd;"><option value="">All Levels</option><option value="Level-1">Level-1</option><option value="Level-2">Level-2</option><option value="Level-3">Level-3</option><option value="Level-4">Level-4</option></select>
+                            <select id="reports-filter-team"  onchange="filterReports()" style="margin:0;width:auto;flex-shrink:0;padding:8px 10px;font-size:12px;border-radius:8px;border:1px solid #ddd;"><option value="">All Teams</option><option value="Lalita">Lalita</option><option value="Visakha">Visakha</option><option value="Chitralekha">Chitralekha</option><option value="Champakalata">Champakalata</option><option value="Tungavidya">Tungavidya</option><option value="Indulekha">Indulekha</option><option value="Rangadevi">Rangadevi</option><option value="Sudevi">Sudevi</option><option value="Anant">Anant</option><option value="Govind">Govind</option><option value="Madhav">Madhav</option><option value="Keshav">Keshav</option><option value="Rohini">Rohini</option><option value="Rukmini">Rukmini</option><option value="Kalindi">Kalindi</option><option value="Satyabhama">Satyabhama</option><option value="Jamvanti">Jamvanti</option><option value="Lakshmana">Lakshmana</option><option value="Kaushal">Kaushal</option><option value="Bhadra">Bhadra</option><option value="Vasudev">Vasudev</option><option value="Sankarshan">Sankarshan</option><option value="Anirudha">Anirudha</option><option value="Pradyuman">Pradyuman</option><option value="Other">Other</option><option value="Overall">Overall</option></select>
+                        </div>
                         <div id="admin-comparative-reports-container"></div>
                     </div>
                 </div>
@@ -1011,14 +1022,12 @@ function highlightUserLevelTab(level) {
                     <h3 style="margin:0 0 14px;color:var(--primary);font-size:15px;">&#128101; User Management</h3>
                     <div class="card">
                         <div class="admin-search-bar">
-                            <input type="text" id="admin-search-input" placeholder="Search devotee by name..." oninput="filterAdminUsers()" style="margin:0;flex:1;">
-                            <select id="admin-category-filter" onchange="filterAdminUsers()" style="margin:0;width:auto;flex-shrink:0;padding:10px 12px;font-size:13px;">
-                                <option value="">All Depts</option>
-                                <option value="IGF">IGF</option>
-                                <option value="IYF">IYF</option>
-                                <option value="ICF_MTG">ICF_MTG</option>
-                                <option value="ICF_PRJI">ICF_PRJI</option>
-                            </select>
+                            <input type="text" id="admin-search-input" placeholder="Search by name..." oninput="filterAdminUsers()" style="margin:0;flex:1;">
+                        </div>
+                        <div style="display:flex;gap:8px;flex-wrap:wrap;align-items:center;margin-bottom:12px;">
+                            <select id="admin-filter-dept"  onchange="updateFilterTeams('admin')" style="margin:0;width:auto;flex-shrink:0;padding:8px 10px;font-size:12px;border-radius:8px;border:1px solid #ddd;"><option value="">All Depts</option><option value="IGF">IGF</option><option value="IYF">IYF</option><option value="ICF_MTG">ICF_MTG</option><option value="ICF_PRJI">ICF_PRJI</option></select>
+                            <select id="admin-filter-level" onchange="filterAdminUsers()" style="margin:0;width:auto;flex-shrink:0;padding:8px 10px;font-size:12px;border-radius:8px;border:1px solid #ddd;"><option value="">All Levels</option><option value="Level-1">Level-1</option><option value="Level-2">Level-2</option><option value="Level-3">Level-3</option><option value="Level-4">Level-4</option></select>
+                            <select id="admin-filter-team"  onchange="filterAdminUsers()" style="margin:0;width:auto;flex-shrink:0;padding:8px 10px;font-size:12px;border-radius:8px;border:1px solid #ddd;"><option value="">All Teams</option><option value="Lalita">Lalita</option><option value="Visakha">Visakha</option><option value="Chitralekha">Chitralekha</option><option value="Champakalata">Champakalata</option><option value="Tungavidya">Tungavidya</option><option value="Indulekha">Indulekha</option><option value="Rangadevi">Rangadevi</option><option value="Sudevi">Sudevi</option><option value="Anant">Anant</option><option value="Govind">Govind</option><option value="Madhav">Madhav</option><option value="Keshav">Keshav</option><option value="Rohini">Rohini</option><option value="Rukmini">Rukmini</option><option value="Kalindi">Kalindi</option><option value="Satyabhama">Satyabhama</option><option value="Jamvanti">Jamvanti</option><option value="Lakshmana">Lakshmana</option><option value="Kaushal">Kaushal</option><option value="Bhadra">Bhadra</option><option value="Vasudev">Vasudev</option><option value="Sankarshan">Sankarshan</option><option value="Anirudha">Anirudha</option><option value="Pradyuman">Pradyuman</option><option value="Other">Other</option><option value="Overall">Overall</option></select>
                         </div>
                         <div id="admin-users-list"></div>
                     </div>
@@ -1027,6 +1036,11 @@ function highlightUserLevelTab(level) {
                 <!-- Inactive Devotees -->
                 <div id="admin-sub-inactive" class="admin-sub-panel hidden">
                     <h3 style="margin:0 0 14px;color:var(--primary);font-size:15px;">&#9888; Inactive Devotees</h3>
+                    <div style="display:flex;gap:8px;flex-wrap:wrap;align-items:center;margin-bottom:12px;">
+                            <select id="inactive-filter-dept"  onchange="updateFilterTeams('inactive')" style="margin:0;width:auto;flex-shrink:0;padding:8px 10px;font-size:12px;border-radius:8px;border:1px solid #ddd;"><option value="">All Depts</option><option value="IGF">IGF</option><option value="IYF">IYF</option><option value="ICF_MTG">ICF_MTG</option><option value="ICF_PRJI">ICF_PRJI</option></select>
+                            <select id="inactive-filter-level" onchange="filterInactiveUsers()" style="margin:0;width:auto;flex-shrink:0;padding:8px 10px;font-size:12px;border-radius:8px;border:1px solid #ddd;"><option value="">All Levels</option><option value="Level-1">Level-1</option><option value="Level-2">Level-2</option><option value="Level-3">Level-3</option><option value="Level-4">Level-4</option></select>
+                            <select id="inactive-filter-team"  onchange="filterInactiveUsers()" style="margin:0;width:auto;flex-shrink:0;padding:8px 10px;font-size:12px;border-radius:8px;border:1px solid #ddd;"><option value="">All Teams</option><option value="Lalita">Lalita</option><option value="Visakha">Visakha</option><option value="Chitralekha">Chitralekha</option><option value="Champakalata">Champakalata</option><option value="Tungavidya">Tungavidya</option><option value="Indulekha">Indulekha</option><option value="Rangadevi">Rangadevi</option><option value="Sudevi">Sudevi</option><option value="Anant">Anant</option><option value="Govind">Govind</option><option value="Madhav">Madhav</option><option value="Keshav">Keshav</option><option value="Rohini">Rohini</option><option value="Rukmini">Rukmini</option><option value="Kalindi">Kalindi</option><option value="Satyabhama">Satyabhama</option><option value="Jamvanti">Jamvanti</option><option value="Lakshmana">Lakshmana</option><option value="Kaushal">Kaushal</option><option value="Bhadra">Bhadra</option><option value="Vasudev">Vasudev</option><option value="Sankarshan">Sankarshan</option><option value="Anirudha">Anirudha</option><option value="Pradyuman">Pradyuman</option><option value="Other">Other</option><option value="Overall">Overall</option></select>
+                        </div>
                     <div id="admin-inactive-container"></div>
                 </div>
             </div>
@@ -1246,12 +1260,12 @@ function highlightUserLevelTab(level) {
 
 <!-- ══ MODAL: User Guide ══ -->
 <div id="user-guide-modal" class="modal-overlay hidden">
-    <div class="modal-box md">
+    <div class="modal-box md guide">
         <button class="modal-close" onclick="document.getElementById('user-guide-modal').classList.add('hidden')">×</button>
-        <div class="modal-title">📖 Sadhana Tracker — User Guide</div>
+        <div class="modal-title" style="display:flex;align-items:center;justify-content:space-between;gap:10px;flex-shrink:0;">📖 Sadhana Tracker — User Guide<a href="Sadhana_Tracker_UserGuide.pdf" download style="font-size:12px;background:#1a237e;color:white;padding:5px 12px;border-radius:20px;text-decoration:none;white-space:nowrap;flex-shrink:0;">⬇ PDF</a></div>
 
         <!-- Tab Navigation — OUTSIDE scroll so always visible -->
-        <div style="display:flex;gap:6px;flex-wrap:nowrap;overflow-x:auto;margin-bottom:10px;border-bottom:2px solid #e5e7eb;padding-bottom:10px;-webkit-overflow-scrolling:touch;scrollbar-width:none;">
+        <div style="display:flex;gap:6px;flex-wrap:nowrap;overflow-x:auto;margin-bottom:10px;border-bottom:2px solid #e5e7eb;padding-bottom:10px;-webkit-overflow-scrolling:touch;scrollbar-width:none;flex-shrink:0;">
             <button onclick="guideTab('intro')"    id="gtab-intro"    class="guide-tab active">🏠 Intro</button>
             <button onclick="guideTab('form')"     id="gtab-form"     class="guide-tab">📝 Form</button>
             <button onclick="guideTab('level1')"   id="gtab-level1"   class="guide-tab" style="color:#1565C0;">L-1</button>
@@ -1264,7 +1278,7 @@ function highlightUserLevelTab(level) {
         </div>
 
         <!-- Scrollable content only -->
-        <div style="overflow-y:auto;max-height:65vh;padding:4px 4px;">
+        <div style="overflow-y:auto;flex:1;min-height:0;padding:4px 4px;">
 
         <!-- INTRO -->
         <div id="gpanel-intro" class="guide-panel">
