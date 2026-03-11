@@ -72,14 +72,7 @@
             <hr class="section-divider">
             <p class="section-label">Your Profile</p>
 
-            <label>Level (for Scoring)</label>
-            <select id="signup-level" required>
-                <option value="" disabled selected>Select your level</option>
-                <option value="Level-1">Level-1 (1–4 Rounds)</option>
-                <option value="Level-2">Level-2 (5–8 Rounds)</option>
-                <option value="Level-3">Level-3 (9–15 Rounds)</option>
-                <option value="Level-4">Level-4 (16 Rounds)</option>
-            </select>
+<p style="font-size:12px;color:#888;margin:8px 0 4px;">Your level will be assigned by your Admin after signup.</p>
 
             <label>Department</label>
             <select id="signup-dept" required onchange="populateDeptTeams('signup-team', this.value)">
@@ -161,7 +154,7 @@
         const name     = document.getElementById('signup-name').value.trim();
         const email    = document.getElementById('signup-email').value.trim();
         const pwd      = document.getElementById('signup-password').value;
-        const level    = document.getElementById('signup-level').value;
+
         const dept     = document.getElementById('signup-dept').value;
         const team     = document.getElementById('signup-team').value;
         const chanting = document.getElementById('signup-chanting').value;
@@ -180,7 +173,7 @@
             // 2. Save complete profile
             await db.collection('users').doc(cred.user.uid).set({
                 name,
-                level,
+                level:            'Level-1',
                 department:       dept,
                 team,
                 chantingCategory: chanting,
