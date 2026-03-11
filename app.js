@@ -28,10 +28,10 @@ const isAnyAdmin      = () => isSuperAdmin() || isDeptAdmin() || isTeamLeader();
 
 // Teams per department
 const DEPT_TEAMS = {
-    'IGF':      ['Lalita','Visakha','Chitralekha','Champakalata','Tungavidya','Indulekha','Rangadevi','Sudevi','Yashoda','Subhadra','Devaki'],
-    'IYF':      ['Anant','Govind','Madhav'],
-    'ICF_MTG':  ['Rukmini','Satyabhama','Jambavati','Kalindi','Mitravinda','Nagnajiti (Satya)','Bhadra','Lakshmana'],
-    'ICF_PRJI': ['Vasudev','Sankarshan','Anirudha','Pradyuman']
+    'IGF':      ['Lalita','Visakha','Chitralekha','Champakalata','Tungavidya','Indulekha','Rangadevi','Sudevi','Other'],
+    'IYF':      ['Anant','Govind','Madhav','Keshav','Janardhan','Other'],
+    'ICF_MTG':  ['Rohini','Rukmini','Kalindi','Satyabhama','Jamvanti','Lakshmana','Kaushal','Bhadra','Other'],
+    'ICF_PRJI': ['Vasudev','Sankarshan','Anirudha','Pradyuman','Other']
 };
 
 // Populate team dropdown based on dept
