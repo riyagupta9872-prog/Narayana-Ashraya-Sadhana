@@ -137,10 +137,10 @@
     const db   = firebase.firestore();
 
     const DEPT_TEAMS = {
-        'IGF':      ['Lalita','Visakha','Chitralekha','Champakalata','Tungavidya','Indulekha','Rangadevi','Sudevi','Yashoda','Subhadra','Devaki'],
-        'IYF':      ['Anant','Govind','Madhav'],
-        'ICF_MTG':  ['Rukmini','Satyabhama','Jambavati','Kalindi','Mitravinda','Nagnajiti (Satya)','Bhadra','Lakshmana'],
-        'ICF_PRJI': ['Vasudev','Sankarshan','Anirudha','Pradyuman']
+        'IGF':      ['Lalita','Visakha','Chitralekha','Champakalata','Tungavidya','Indulekha','Rangadevi','Sudevi','Other'],
+        'IYF':      ['Anant','Govind','Madhav','Keshav','Janardhan','Other'],
+        'ICF_MTG':  ['Rohini','Rukmini','Kalindi','Satyabhama','Jamvanti','Lakshmana','Kaushal','Bhadra','Other'],
+        'ICF_PRJI': ['Vasudev','Sankarshan','Anirudha','Pradyuman','Other']
     };
     function populateDeptTeams(selectId, dept, selected = '') {
         const sel = document.getElementById(selectId);
