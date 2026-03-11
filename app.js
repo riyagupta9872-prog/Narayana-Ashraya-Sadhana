@@ -815,6 +815,26 @@ window.guideTab = (tab) => {
     document.getElementById('gtab-'+tab)?.classList.add('active');
 };
 
+window.openUserGuide = (forcedTab) => {
+    const modal = document.getElementById('user-guide-modal');
+    if (!modal) return;
+    modal.classList.remove('hidden');
+    // Use forced tab (from admin click) or user's own level
+    const level  = userProfile?.level || '';
+    const tabMap = {'Level-1':'level1','Level-2':'level2','Level-3':'level3','Level-4':'level4'};
+    const tab    = forcedTab || tabMap[level] || 'intro';
+    window.guideTab(tab);
+    // Gold highlight on user's own level tab
+    ['level1','level2','level3','level4'].forEach(t => {
+        const b = document.getElementById('gtab-'+t);
+        if (!b) return;
+        const isOwn = (t === tabMap[level]);
+        b.style.outline      = isOwn ? '2px solid gold' : '';
+        b.style.outlineOffset= isOwn ? '2px' : '';
+        b.title              = isOwn ? 'Your current level' : '';
+    });
+};
+
 function loadReports(userId, containerId) {
     const container = document.getElementById(containerId);
     if (!container) return;
