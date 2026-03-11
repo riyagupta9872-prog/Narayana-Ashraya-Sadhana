@@ -702,10 +702,10 @@ function initDashboard() {
         switchTab('admin-reports');
     } else {
         switchTab('sadhana');
+        setupDateSelect();
+        refreshFormFields();
     }
     if (window._initNotifications) window._initNotifications();
-    setupDateSelect();
-    refreshFormFields();
 }
 
 // ═══════════════════════════════════════════════════════════
@@ -2026,6 +2026,16 @@ document.getElementById('profile-form').onsubmit = async (e) => {
 };
 
 // ═══════════════════════════════════════════════════════════
+// SHOW/HIDE PASSWORD TOGGLE
+// ═══════════════════════════════════════════════════════════
+window.togglePwd = (id, btn) => {
+    const inp = document.getElementById(id);
+    if (!inp) return;
+    inp.type = inp.type === 'password' ? 'text' : 'password';
+    btn.textContent = inp.type === 'password' ? '👁' : '🙈';
+};
+
+// ═══════════════════════════════════════════════════════════
 // 13. PASSWORD MODAL
 // ═══════════════════════════════════════════════════════════
 window.openPasswordModal = () => {
@@ -2048,10 +2058,21 @@ window.submitPasswordChange = async () => {
     try {
         await currentUser.updatePassword(newPwd);
         closePasswordModal();
-        alert('✅ Password changed successfully!');
+        showToast('✅ Password changed successfully!', 'success');
     } catch (err) {
         if (err.code === 'auth/requires-recent-login') {
-            alert('⚠️ For security, please logout and login again, then try changing your password.');
+            // Prompt for current password to reauthenticate
+            const currentPwd = prompt('For security, please enter your CURRENT password to confirm:');
+            if (!currentPwd) return;
+            try {
+                const cred = firebase.auth.EmailAuthProvider.credential(currentUser.email, currentPwd);
+                await currentUser.reauthenticateWithCredential(cred);
+                await currentUser.updatePassword(newPwd);
+                closePasswordModal();
+                showToast('✅ Password changed successfully!', 'success');
+            } catch (e) {
+                alert('❌ Failed: ' + e.message);
+            }
         } else {
             alert('❌ Failed: ' + err.message);
         }
