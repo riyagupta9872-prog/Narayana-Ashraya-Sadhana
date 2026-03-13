@@ -922,14 +922,16 @@ function loadReports(userId, containerId) {
                     const svcPoolInfo = `🛠️ ${svcTotal}min`;
 
                     const rowsHtml = wk.data.sort((a,b)=>b.id.localeCompare(a.id)).map((e, ri) => {
-                        const isNR     = e.sleepTime === 'NR';
-                        const stripeBg = ri%2===0?'#ffffff':'#f8fafc';
-                        const rowBg    = isNR ? '#fff5f5' : stripeBg;
+                        const isNR       = e.sleepTime === 'NR';
+                        const isRejected = e.rejected === true;
+                        const stripeBg   = ri%2===0?'#ffffff':'#f8fafc';
+                        const rowBg      = isRejected ? '#fff0f0' : isNR ? '#fff5f5' : stripeBg;
                         const sc       = e.scores || {};
                         const editedBadge = e.editedAt
                             ? `<span class="edited-badge" onclick="showEditHistory(event,'${e.id}','${userId}')" title="View edit history">✏️</span>` : '';
                         const editBtn = isSuperAdmin()
-                            ? `<button onclick="openEditModal('${userId}','${e.id}')" class="btn-edit-cell">Edit</button>` : '';
+                            ? `<button onclick="openEditModal('${userId}','${e.id}')" class="btn-edit-cell">Edit</button>
+                               <button onclick="toggleRejectEntry('${userId}','${e.id}',${isRejected})" class="btn-edit-cell" style="background:${isRejected?'#16a34a':'#dc2626'} !important;">${isRejected?'✅ Restore':'🚫 Reject'}</button>` : '';
 
                         // Best of pathan/hearing
                         const patS  = sc.reading??0;
@@ -1484,48 +1486,13 @@ async function loadAdminPanel() {
 
         const safe = (u.name||'').replace(/\\/g,'\\\\').replace(/'/g,"\\'");
 
-        let roleDropdown = '';
-        if (isSuperAdmin()) {
-            // Super admin can assign any role
-            let opts = '<option value="" disabled selected>Change Role…</option>';
-            if (u.role === 'superAdmin') {
-                opts += '<option value="demote">🚫 Revoke Super Admin</option>';
-            } else {
-                opts += `<option value="superAdmin">👑 Make Super Admin</option>`;
-                ['IGF','IYF','ICF_MTG','ICF_PRJI'].forEach(dept => {
-                    opts += `<option value="deptAdmin:${dept}">🛡️ Dept Admin — ${dept}</option>`;
-                    if (DEPT_TEAMS[dept]) {
-                        DEPT_TEAMS[dept].forEach(team => {
-                            opts += `<option value="teamLeader:${dept}:${team}">👥 Team Leader — ${team} (${dept})</option>`;
-                        });
-                    }
-                });
-                opts += '<option value="demote">🚫 Revoke to User</option>';
-            }
-            roleDropdown = `<select onchange="handleRoleDropdown('${uDoc.id}',this)"
-                style="padding:6px 10px;border-radius:8px;border:1px solid #ddd;font-size:12px;height:34px;background:white;cursor:pointer;flex:1;min-width:180px;max-width:220px;margin:0;">
-                ${opts}</select>`;
-        } else if (isDeptAdmin() && u.department === userProfile.department && u.role !== 'superAdmin') {
-            // Dept admin can only assign teamLeader within their dept
-            let opts = '<option value="" disabled selected>Change Role…</option>';
-            if (DEPT_TEAMS[userProfile.department]) {
-                DEPT_TEAMS[userProfile.department].forEach(team => {
-                    opts += `<option value="teamLeader:${userProfile.department}:${team}">👥 Team Leader — ${team}</option>`;
-                });
-            }
-            opts += '<option value="demote">🚫 Revoke to User</option>';
-            roleDropdown = `<select onchange="handleRoleDropdown('${uDoc.id}',this)"
-                style="padding:6px 10px;border-radius:8px;border:1px solid #ddd;font-size:12px;height:34px;background:white;cursor:pointer;flex:1;min-width:180px;max-width:220px;margin:0;">
-                ${opts}</select>`;
-        }
-
         card.innerHTML = `
             <div class="user-card-top">
-                <span class="user-name" onclick="openUserCard('${uDoc.id}','${safe}')" style="cursor:pointer;text-decoration:underline;color:#3498db;">${u.name}</span>${badge}
+                <span class="user-name">${u.name}</span>${badge}
                 <div class="user-meta">${u.level||'Level-1'} · ${u.department||'-'} · ${u.team||'-'} · ${u.chantingCategory||'N/A'} · ${u.exactRounds||'?'} rounds</div>
             </div>
             <div class="user-actions">
-                <button onclick="openUserCard('${uDoc.id}','${safe}')" class="btn-primary btn-sm">👤 View Profile</button>
+                <button onclick="openDevoteeProfile('${uDoc.id}','${safe}')" class="btn-primary btn-sm">👤 View Profile</button>
                 <select onchange="handleLevelChange('${uDoc.id}', this)"
                     style="padding:6px 10px;border-radius:8px;border:1px solid #ddd;font-size:12px;height:34px;background:white;cursor:pointer;width:auto;margin:2px;">
                     <option value="" disabled selected>Level: ${u.level||'Level-1'}</option>
@@ -1534,7 +1501,6 @@ async function loadAdminPanel() {
                     <option value="Level-3">Level-3</option>
                     <option value="Level-4">Level-4</option>
                 </select>
-                ${roleDropdown}
             </div>`;
         usersList.appendChild(card);
     }
@@ -1709,105 +1675,10 @@ window.handleRoleDropdown = async (uid, sel) => {
 
     const updateData = { role: newRole, department: dept || (await db.collection('users').doc(uid).get()).data().department, team: team || (await db.collection('users').doc(uid).get()).data().team };
     await db.collection('users').doc(uid).update(updateData);
-    alert('✅ Role updated!');
+    showToast('✅ Role updated!', 'success');
     if (window._sendRoleNotification) window._sendRoleNotification(uid, '', val, dept);
+    adminPanelLoaded = false;
     loadAdminPanel();
-};
-
-// Role modal for user card
-window.openRoleModal = async (userId, userName, userData) => {
-    if (!isSuperAdmin() && !isDeptAdmin() && !isTeamLeader()) {
-        alert('⛔ You do not have permission to change roles!');
-        return;
-    }
-    
-    let options = '<option value="" disabled selected>Select new role…</option>';
-    
-    if (isSuperAdmin()) {
-        if (userData.role !== 'superAdmin') {
-            options += '<option value="superAdmin">👑 Super Admin</option>';
-        }
-        ['IGF','IYF','ICF_MTG','ICF_PRJI'].forEach(dept => {
-            options += `<option value="deptAdmin:${dept}">🛡️ Dept Admin — ${dept}</option>`;
-            if (DEPT_TEAMS[dept]) {
-                DEPT_TEAMS[dept].forEach(team => {
-                    options += `<option value="teamLeader:${dept}:${team}">👥 Team Leader — ${team} (${dept})</option>`;
-                });
-            }
-        });
-        options += '<option value="user">🚫 Regular User</option>';
-    } else if (isDeptAdmin() && userData.department === userProfile.department) {
-        if (DEPT_TEAMS[userProfile.department]) {
-            DEPT_TEAMS[userProfile.department].forEach(team => {
-                options += `<option value="teamLeader:${userProfile.department}:${team}">👥 Team Leader — ${team}</option>`;
-            });
-        }
-        options += '<option value="user">🚫 Regular User</option>';
-    } else if (isTeamLeader() && userData.team === userProfile.team) {
-        options += '<option value="user">🚫 Regular User</option>';
-    }
-    
-    const selection = prompt(`Change role for: ${userName}\n\nCurrent role: ${userData.role || 'user'}\nCurrent dept: ${userData.department || 'N/A'}\nCurrent team: ${userData.team || 'N/A'}\n\nEnter:\n1 = Super Admin\n2 = Dept Admin\n3 = Team Leader\n4 = User\n\nOr type 'cancel' to abort`);
-    
-    if (!selection || selection.toLowerCase() === 'cancel') return;
-    
-    let newRole, newDept = null, newTeam = null;
-    
-    if (selection === '1' && isSuperAdmin()) {
-        newRole = 'superAdmin';
-        if (!confirm(`👑 Make ${userName} a SUPER ADMIN?\n\nFull access to all departments.`)) return;
-    } else if (selection === '2' && isSuperAdmin()) {
-        const deptChoice = prompt(`Select department:\n\n1 = IGF\n2 = IYF\n3 = ICF_MTG\n4 = ICF_PRJI`);
-        const deptMap = { '1': 'IGF', '2': 'IYF', '3': 'ICF_MTG', '4': 'ICF_PRJI' };
-        newDept = deptMap[deptChoice];
-        if (!newDept) { alert('❌ Invalid department selection!'); return; }
-        newRole = 'deptAdmin';
-        if (!confirm(`🛡️ Make ${userName} Dept Admin for ${newDept}?`)) return;
-    } else if (selection === '3') {
-        let deptForTeam = userData.department || userProfile.department;
-        if (isSuperAdmin()) {
-            const deptChoice = prompt(`Select department:\n\n1 = IGF\n2 = IYF\n3 = ICF_MTG\n4 = ICF_PRJI`);
-            const deptMap = { '1': 'IGF', '2': 'IYF', '3': 'ICF_MTG', '4': 'ICF_PRJI' };
-            deptForTeam = deptMap[deptChoice];
-        }
-        if (!deptForTeam || !DEPT_TEAMS[deptForTeam]) {
-            alert('❌ Invalid department!');
-            return;
-        }
-        const teamList = DEPT_TEAMS[deptForTeam].map((t, i) => `${i + 1} = ${t}`).join('\n');
-        const teamChoice = prompt(`Select team in ${deptForTeam}:\n\n${teamList}`);
-        const teamIndex = parseInt(teamChoice) - 1;
-        if (teamIndex < 0 || teamIndex >= DEPT_TEAMS[deptForTeam].length) {
-            alert('❌ Invalid team selection!');
-            return;
-        }
-        newTeam = DEPT_TEAMS[deptForTeam][teamIndex];
-        newRole = 'teamLeader';
-        newDept = deptForTeam;
-        if (!confirm(`👥 Make ${userName} Team Leader for ${newTeam} (${newDept})?`)) return;
-    } else if (selection === '4') {
-        newRole = 'user';
-        if (!confirm(`🚫 Set ${userName} as regular User?\n\nThis will remove all admin privileges.`)) return;
-    } else {
-        alert('❌ Invalid selection!');
-        return;
-    }
-    
-    if (!confirm('Final confirmation?')) return;
-    
-    try {
-        const updateData = { role: newRole };
-        if (newDept) updateData.department = newDept;
-        if (newTeam) updateData.team = newTeam;
-        
-        await db.collection('users').doc(userId).update(updateData);
-        alert(`✅ Role updated successfully!\n\nUser: ${userName}\nNew Role: ${newRole}`);
-        
-        if (typeof loadIndividualReports === 'function') loadIndividualReports();
-    } catch (error) {
-        console.error('Error updating role:', error);
-        alert('❌ Failed to update role: ' + error.message);
-    }
 };
 
 // ═══════════════════════════════════════════════════════════
@@ -2033,6 +1904,181 @@ window.showEditHistory = async (evt, date, userId) => {
 
 window.closeEditHistoryModal = () => {
     document.getElementById('edit-history-modal').classList.add('hidden');
+};
+
+// ═══════════════════════════════════════════════════════════
+// DEVOTEE PROFILE MODAL  (View Profile button)
+// ═══════════════════════════════════════════════════════════
+let _devoteeProfileData = null;
+
+window.openDevoteeProfile = async (userId, userName) => {
+    const uSnap = await db.collection('users').doc(userId).get();
+    if (!uSnap.exists) { showToast('User not found', 'error'); return; }
+    const u = uSnap.data();
+    _devoteeProfileData = { userId, userName, u };
+
+    const initials = (u.name||userName).split(' ').map(n=>n[0]).join('').substring(0,2).toUpperCase();
+
+    // Role badge
+    const roleLbl = u.role==='superAdmin' ? '👑 Super Admin'
+        : u.role==='deptAdmin'  ? `🛡️ Dept Admin — ${u.department||''}`
+        : u.role==='teamLeader' ? `👥 Team Leader — ${u.team||''}`
+        : '👤 User';
+    const roleColor = u.role==='superAdmin'?'#7e22ce':u.role==='deptAdmin'?'#1a5276':u.role==='teamLeader'?'#1e8449':'#374151';
+
+    // Build role change dropdown options
+    let roleOpts = '<option value="" disabled selected>Change Role…</option>';
+    if (isSuperAdmin()) {
+        if (u.role !== 'superAdmin') roleOpts += `<option value="superAdmin">👑 Make Super Admin</option>`;
+        ['IGF','IYF','ICF_MTG','ICF_PRJI'].forEach(dept => {
+            roleOpts += `<option value="deptAdmin:${dept}">🛡️ Dept Admin — ${dept}</option>`;
+            if (DEPT_TEAMS[dept]) DEPT_TEAMS[dept].forEach(team =>
+                roleOpts += `<option value="teamLeader:${dept}:${team}">👥 TL — ${team} (${dept})</option>`
+            );
+        });
+        roleOpts += '<option value="demote">🚫 Revoke to User</option>';
+    } else if (isDeptAdmin() && u.department === userProfile.department && u.role !== 'superAdmin') {
+        if (DEPT_TEAMS[userProfile.department]) DEPT_TEAMS[userProfile.department].forEach(team =>
+            roleOpts += `<option value="teamLeader:${userProfile.department}:${team}">👥 TL — ${team}</option>`
+        );
+        roleOpts += '<option value="demote">🚫 Revoke to User</option>';
+    }
+    const canChangeRole = isSuperAdmin() || (isDeptAdmin() && u.department === userProfile.department && u.role !== 'superAdmin');
+    const canDelete = isSuperAdmin();
+
+    document.getElementById('dp-initials').textContent = initials;
+    document.getElementById('dp-name').textContent = u.name || userName;
+    document.getElementById('dp-role-lbl').textContent = roleLbl;
+    document.getElementById('dp-role-lbl').style.color = roleColor;
+    document.getElementById('dp-meta').textContent = `${u.department||'-'} · ${u.team||'-'} · ${u.chantingCategory||'N/A'} · ${u.exactRounds||'?'} rounds`;
+    document.getElementById('dp-instrument').textContent = u.instrument || 'Not set';
+    document.getElementById('dp-level').textContent = u.level || 'Level-1';
+
+    // Role change section
+    const roleSection = document.getElementById('dp-role-section');
+    if (canChangeRole) {
+        roleSection.classList.remove('hidden');
+        document.getElementById('dp-role-select').innerHTML = roleOpts;
+    } else {
+        roleSection.classList.add('hidden');
+    }
+
+    // Delete button
+    const delBtn = document.getElementById('dp-delete-btn');
+    if (delBtn) delBtn.style.display = canDelete ? 'block' : 'none';
+
+    document.getElementById('devotee-profile-modal').classList.remove('hidden');
+};
+
+window.closeDevoteeProfile = () => {
+    document.getElementById('devotee-profile-modal').classList.add('hidden');
+    _devoteeProfileData = null;
+};
+
+window.dpViewHistory = () => {
+    if (!_devoteeProfileData) return;
+    const { userId, userName } = _devoteeProfileData;
+    closeDevoteeProfile();
+    openUserModal(userId, userName);
+};
+
+window.dpDownloadExcel = () => {
+    if (!_devoteeProfileData) return;
+    downloadUserExcel(_devoteeProfileData.userId, _devoteeProfileData.userName);
+};
+
+window.dpViewProgress = () => {
+    if (!_devoteeProfileData) return;
+    const { userId, userName } = _devoteeProfileData;
+    closeDevoteeProfile();
+    openProgressModal(userId, userName);
+};
+
+window.dpChangeRole = async (sel) => {
+    if (!_devoteeProfileData) return;
+    const val = sel.value; sel.value = '';
+    if (!val) return;
+    const { userId, userName } = _devoteeProfileData;
+    // Reuse existing handleRoleDropdown logic
+    const fakeSel = { value: val };
+    await handleRoleDropdown(userId, fakeSel);
+    closeDevoteeProfile();
+};
+
+window.dpDeleteUser = async () => {
+    if (!_devoteeProfileData || !isSuperAdmin()) return;
+    const { userId, userName } = _devoteeProfileData;
+    if (!confirm(`⚠️ DELETE "${userName}"?\n\nThis will permanently remove:\n• User document\n• All sadhana entries\n• All notifications\n\nThis CANNOT be undone!`)) return;
+    const typed = prompt(`Type the user's name exactly to confirm:\n\n"${userName}"`);
+    if (typed !== userName) { showToast('Name mismatch — deletion cancelled', 'error'); return; }
+    try {
+        showToast('Deleting user data…', 'info');
+        // Delete sadhana subcollection in batches
+        const sSnap = await db.collection('users').doc(userId).collection('sadhana').get();
+        if (!sSnap.empty) {
+            const batch = db.batch();
+            sSnap.docs.forEach(d => batch.delete(d.ref));
+            await batch.commit();
+        }
+        // Delete notifications subcollection
+        const nSnap = await db.collection('users').doc(userId).collection('notifications').get();
+        if (!nSnap.empty) {
+            const batch2 = db.batch();
+            nSnap.docs.forEach(d => batch2.delete(d.ref));
+            await batch2.commit();
+        }
+        // Delete user doc
+        await db.collection('users').doc(userId).delete();
+        closeDevoteeProfile();
+        showToast(`✅ "${userName}" deleted successfully`, 'success');
+        adminPanelLoaded = false;
+        loadAdminPanel();
+    } catch (err) {
+        console.error('Delete error:', err);
+        showToast('❌ Delete failed: ' + err.message, 'error');
+    }
+};
+
+// ─── REJECT / RESTORE entry (in-row button) ──────────────
+window.toggleRejectEntry = async (userId, dateStr, isCurrentlyRejected) => {
+    if (!isSuperAdmin()) return;
+
+    if (isCurrentlyRejected) {
+        // RESTORE
+        if (!confirm(`✅ Restore entry for ${dateStr}?\n\nOriginal score will be reinstated.`)) return;
+        try {
+            const docSnap = await db.collection('users').doc(userId).collection('sadhana').doc(dateStr).get();
+            const d = docSnap.data();
+            await db.collection('users').doc(userId).collection('sadhana').doc(dateStr).update({
+                rejected: false,
+                totalScore: d.originalTotalScore ?? d.totalScore,
+                dayPercent: d.originalDayPercent ?? d.dayPercent,
+                revokedAt: firebase.firestore.FieldValue.serverTimestamp(),
+                revokedBy: userProfile.name
+            });
+            showToast('✅ Entry restored!', 'success');
+        } catch(err) { showToast('❌ ' + err.message, 'error'); }
+    } else {
+        // REJECT
+        const reason = prompt(`🚫 Reject entry for ${dateStr}?\n\nEnter reason (required):`);
+        if (!reason?.trim()) { showToast('Rejection cancelled — reason required', 'warn'); return; }
+        if (!confirm(`Apply −30 penalty and reject this entry?\nReason: ${reason}`)) return;
+        try {
+            const docSnap = await db.collection('users').doc(userId).collection('sadhana').doc(dateStr).get();
+            const d = docSnap.data();
+            await db.collection('users').doc(userId).collection('sadhana').doc(dateStr).update({
+                rejected: true,
+                rejectedAt: firebase.firestore.FieldValue.serverTimestamp(),
+                rejectedBy: userProfile.name,
+                rejectionReason: reason.trim(),
+                originalTotalScore: d.totalScore ?? 0,
+                originalDayPercent: d.dayPercent ?? 0,
+                totalScore: -30,
+                dayPercent: -19
+            });
+            showToast('🚫 Entry rejected!', 'success');
+        } catch(err) { showToast('❌ ' + err.message, 'error'); }
+    }
 };
 
 // ═══════════════════════════════════════════════════════════
@@ -2477,364 +2523,4 @@ window.openNotificationsPanel = async () => {
         const badge = document.getElementById('sidebar-notif-badge');
         if (badge) badge.classList.add('hidden');
     } catch(e) { console.warn(e); }
-};
-
-// ═══════════════════════════════════════════════════════════
-// FORGOT PASSWORD
-// ═══════════════════════════════════════════════════════════
-window.openForgotPassword = (e) => {
-    e.preventDefault();
-    const email = prompt('📧 Enter your registered email address:\n\nWe will send you a password reset link.');
-    if (!email) return;
-    if (!email.includes('@') || !email.includes('.')) {
-        alert('❌ Please enter a valid email address!');
-        return;
-    }
-    if (!confirm(`Send password reset email to:\n\n${email}\n\nPlease check your inbox and spam folder.`)) return;
-    
-    auth.sendPasswordResetEmail(email, {
-        url: window.location.origin + window.location.pathname,
-        handleCodeInApp: false
-    })
-    .then(() => {
-        alert(`✅ Password Reset Email Sent!\n\nWe have sent a password reset link to:\n${email}\n\nPlease check:\n• Inbox\n• Spam/Junk folder\n• Promotions tab (Gmail)\n\nThe link will expire in 1 hour.`);
-    })
-    .catch((error) => {
-        console.error('Password reset error:', error);
-        let msg = '❌ Error sending reset email!';
-        if (error.code === 'auth/user-not-found') {
-            msg = '❌ No account found with this email address!\n\nPlease check the email and try again, or contact admin.';
-        } else if (error.code === 'auth/invalid-email') {
-            msg = '❌ Invalid email format!\n\nPlease enter a valid email address.';
-        } else if (error.code === 'auth/too-many-requests') {
-            msg = '❌ Too many requests!\n\nPlease wait a few minutes and try again.';
-        } else {
-            msg = `❌ Error: ${error.message}`;
-        }
-        alert(msg);
-    });
-};
-
-// ═══════════════════════════════════════════════════════════
-// REVERSIBLE REJECTION SYSTEM
-// ═══════════════════════════════════════════════════════════
-window.openRejectModal = async (userId, userName, dateStr) => {
-    if (!isSuperAdmin()) {
-        alert('⛔ Only SuperAdmin can reject entries!');
-        return;
-    }
-    try {
-        const doc = await db.collection('users').doc(userId).collection('sadhana').doc(dateStr).get();
-        if (!doc.exists) {
-            alert('❌ No sadhana entry found for this date!');
-            return;
-        }
-        const data = doc.data();
-        if (data.rejected === true) {
-            if (confirm(`⚠️ This entry is ALREADY REJECTED!\n\nOriginal Score: ${data.originalTotalScore || 0}\nCurrent Score: ${data.totalScore}\nReason: ${data.rejectionReason || 'N/A'}\n\nDo you want to REVOKE the rejection and restore original marks?`)) {
-                await revokeRejection(userId, userName, dateStr, data);
-            }
-            return;
-        }
-        window.rejectData = {
-            userId: userId,
-            userName: userName,
-            dateStr: dateStr,
-            currentScore: data.totalScore || 0,
-            data: data
-        };
-        document.getElementById('reject-user-name').textContent = userName;
-        document.getElementById('reject-date').textContent = dateStr;
-        document.getElementById('reject-current-score').textContent = data.totalScore || 0;
-        document.getElementById('reject-reason').value = '';
-        document.getElementById('reject-modal').classList.remove('hidden');
-    } catch (error) {
-        console.error('Error loading entry:', error);
-        alert('❌ Error: ' + error.message);
-    }
-};
-
-window.closeRejectModal = () => {
-    document.getElementById('reject-modal').classList.add('hidden');
-    document.getElementById('reject-reason').value = '';
-    window.rejectData = null;
-};
-
-window.confirmReject = async () => {
-    if (!window.rejectData) return;
-    const reason = document.getElementById('reject-reason').value.trim();
-    if (!reason) {
-        alert('⚠️ Please provide a rejection reason!');
-        return;
-    }
-    if (!confirm(`⚠️ CONFIRM REJECTION?\n\nUser: ${window.rejectData.userName}\nDate: ${window.rejectData.dateStr}\nReason: ${reason}\n\nThis will:\n• Apply -50 penalty\n• Notify user\n• Can be revoked later if needed\n\nProceed?`)) return;
-    
-    try {
-        const { userId, userName, dateStr, currentScore, data } = window.rejectData;
-        const rejectionRef = db.collection('users').doc(userId).collection('sadhana').doc(dateStr).collection('rejections').doc();
-        await rejectionRef.set({
-            rejectedAt: firebase.firestore.FieldValue.serverTimestamp(),
-            rejectedBy: currentUser.uid,
-            rejectedByEmail: currentUser.email,
-            rejectedByName: userProfile.name || 'SuperAdmin',
-            reason: reason,
-            originalScore: currentScore,
-            penaltyApplied: -50,
-            originalData: {
-                sleepTime: data.sleepTime,
-                wakeupTime: data.wakeupTime,
-                chantingTime: data.chantingTime,
-                readingMinutes: data.readingMinutes,
-                hearingMinutes: data.hearingMinutes,
-                serviceMinutes: data.serviceMinutes,
-                notesMinutes: data.notesMinutes || 0,
-                daySleepMinutes: data.daySleepMinutes,
-                scores: data.scores,
-                totalScore: data.totalScore,
-                dayPercent: data.dayPercent
-            }
-        });
-        
-        await db.collection('users').doc(userId).collection('sadhana').doc(dateStr).update({
-            rejected: true,
-            rejectedAt: firebase.firestore.FieldValue.serverTimestamp(),
-            rejectedBy: currentUser.uid,
-            rejectedByName: userProfile.name || 'SuperAdmin',
-            rejectionReason: reason,
-            originalTotalScore: currentScore,
-            originalDayPercent: data.dayPercent,
-            totalScore: -50,
-            dayPercent: -31
-        });
-        
-        await db.collection('users').doc(userId).collection('notifications').add({
-            type: 'rejection',
-            title: '🚫 Sadhana Entry Rejected',
-            message: `SuperAdmin ${userProfile.name} rejected your sadhana entry for ${dateStr}.\n\nReason: ${reason}\n\nIf you believe this is incorrect, please contact the admin with your explanation.`,
-            reason: reason,
-            dateStr: dateStr,
-            penalty: -50,
-            createdAt: firebase.firestore.FieldValue.serverTimestamp(),
-            read: false
-        });
-        
-        alert(`✅ Entry Rejected!\n\nUser: ${userName}\nDate: ${dateStr}\nPenalty: -50\n\nUser has been notified. You can revoke this rejection later if needed.`);
-        closeRejectModal();
-        if (typeof loadIndividualReports === 'function') loadIndividualReports();
-    } catch (error) {
-        console.error('Error rejecting entry:', error);
-        alert('❌ Rejection failed: ' + error.message);
-    }
-};
-
-async function revokeRejection(userId, userName, dateStr, data) {
-    if (!confirm(`✅ CONFIRM REVOCATION?\n\nUser: ${userName}\nDate: ${dateStr}\n\nThis will:\n• Restore original score: ${data.originalTotalScore || 0}\n• Remove rejection penalty\n• Notify user\n\nProceed?`)) return;
-    try {
-        await db.collection('users').doc(userId).collection('sadhana').doc(dateStr).update({
-            rejected: false,
-            revokedAt: firebase.firestore.FieldValue.serverTimestamp(),
-            revokedBy: currentUser.uid,
-            revokedByName: userProfile.name || 'SuperAdmin',
-            totalScore: data.originalTotalScore || 0,
-            dayPercent: data.originalDayPercent || 0,
-            rejectionRevoked: true
-        });
-        
-        await db.collection('users').doc(userId).collection('notifications').add({
-            type: 'revocation',
-            title: '✅ Rejection Revoked',
-            message: `Good news! SuperAdmin ${userProfile.name} has revoked the rejection for your sadhana entry on ${dateStr}.\n\nYour original score of ${data.originalTotalScore || 0} has been restored.`,
-            dateStr: dateStr,
-            restoredScore: data.originalTotalScore || 0,
-            createdAt: firebase.firestore.FieldValue.serverTimestamp(),
-            read: false
-        });
-        
-        alert(`✅ Rejection Revoked!\n\nUser: ${userName}\nDate: ${dateStr}\nRestored Score: ${data.originalTotalScore || 0}\n\nUser has been notified.`);
-        if (typeof loadIndividualReports === 'function') loadIndividualReports();
-    } catch (error) {
-        console.error('Error revoking rejection:', error);
-        alert('❌ Revocation failed: ' + error.message);
-    }
-}
-
-// ═══════════════════════════════════════════════════════════
-// USER CARD SYSTEM
-// ═══════════════════════════════════════════════════════════
-let currentUserCard = null;
-
-window.openUserCard = async (userId, userName) => {
-    try {
-        const userDoc = await db.collection('users').doc(userId).get();
-        if (!userDoc.exists) {
-            alert('❌ User not found!');
-            return;
-        }
-        const userData = userDoc.data();
-        currentUserCard = { userId: userId, userName: userName, userData: userData };
-        const initials = userName.split(' ').map(n => n[0]).join('').substring(0, 2).toUpperCase();
-        document.getElementById('user-card-initials').textContent = initials;
-        document.getElementById('user-card-name').textContent = userName;
-        document.getElementById('user-card-dept').textContent = `${userData.department || 'N/A'} • ${userData.team || 'N/A'}`;
-        document.getElementById('user-card-level').textContent = `${userData.chantingCategory || 'N/A'} (${userData.exactRounds || 0} Rounds)`;
-        
-        const stats = await calculateUserStats(userId);
-        document.getElementById('user-card-avg').textContent = stats.avgPercent + '%';
-        document.getElementById('user-card-streak').textContent = stats.streak;
-        document.getElementById('user-card-total').textContent = stats.totalEntries;
-        
-        if (isSuperAdmin()) {
-            document.getElementById('reject-card-btn').style.display = 'flex';
-            document.getElementById('remove-user-card-btn').style.display = 'flex';
-            document.getElementById('change-role-card-btn').style.display = 'flex';
-        } else {
-            document.getElementById('reject-card-btn').style.display = 'none';
-            document.getElementById('remove-user-card-btn').style.display = 'none';
-            document.getElementById('change-role-card-btn').style.display = isTeamLeader() ? 'flex' : 'none';
-        }
-        document.getElementById('user-card-modal').classList.remove('hidden');
-    } catch (error) {
-        console.error('Error opening user card:', error);
-        alert('❌ Error: ' + error.message);
-    }
-};
-
-window.closeUserCard = () => {
-    document.getElementById('user-card-modal').classList.add('hidden');
-    // Don't set to null immediately - let button handlers use it
-    setTimeout(() => { currentUserCard = null; }, 500);
-};
-
-async function calculateUserStats(userId) {
-    try {
-        const snapshot = await db.collection('users').doc(userId).collection('sadhana').orderBy('id', 'desc').limit(30).get();
-        let totalPercent = 0, count = 0, streak = 0, lastDate = null;
-        snapshot.forEach(doc => {
-            const data = doc.data();
-            if (data.totalScore !== undefined && data.totalScore !== 'NR') {
-                totalPercent += (data.dayPercent || 0);
-                count++;
-                const currentDate = doc.id;
-                if (!lastDate) {
-                    streak = 1;
-                } else {
-                    const diff = Math.abs(new Date(lastDate) - new Date(currentDate)) / (1000 * 60 * 60 * 24);
-                    if (diff === 1) streak++;
-                }
-                lastDate = currentDate;
-            }
-        });
-        return {
-            avgPercent: count > 0 ? Math.round(totalPercent / count) : 0,
-            streak: streak,
-            totalEntries: count
-        };
-    } catch (error) {
-        console.error('Error calculating stats:', error);
-        return { avgPercent: 0, streak: 0, totalEntries: 0 };
-    }
-}
-
-window.openUserHistoryFromCard = () => {
-    if (!currentUserCard) {
-        console.error('No user card data available');
-        return;
-    }
-    // Store data before closing
-    const userId = currentUserCard.userId;
-    const userName = currentUserCard.userName;
-    closeUserCard();
-    openUserModal(userId, userName);
-};
-
-window.downloadExcelFromCard = () => {
-    if (!currentUserCard) {
-        console.error('No user card data available');
-        return;
-    }
-    // Store data before action
-    const userId = currentUserCard.userId;
-    const userName = currentUserCard.userName;
-    downloadUserExcel(userId, userName);
-};
-
-window.viewProgressFromCard = () => {
-    if (!currentUserCard) {
-        console.error('No user card data available');
-        return;
-    }
-    // Store data before closing
-    const userId = currentUserCard.userId;
-    const userName = currentUserCard.userName;
-    closeUserCard();
-    openProgressModal(userId, userName);
-};
-
-window.openChangeRoleFromCard = () => {
-    if (!currentUserCard) {
-        console.error('No user card data available');
-        return;
-    }
-    // Store data before closing
-    const userId = currentUserCard.userId;
-    const userName = currentUserCard.userName;
-    const userData = currentUserCard.userData;
-    closeUserCard();
-    openRoleModal(userId, userName, userData);
-};
-
-window.openRejectEntryFromCard = () => {
-    if (!currentUserCard) {
-        console.error('No user card data available');
-        return;
-    }
-    // Store data before closing
-    const userId = currentUserCard.userId;
-    const userName = currentUserCard.userName;
-    
-    const dateStr = prompt(`Enter date to reject (YYYY-MM-DD):\n\nExample: ${localDateStr(1)}`);
-    if (!dateStr) return;
-    if (!/^\d{4}-\d{2}-\d{2}$/.test(dateStr)) {
-        alert('❌ Invalid date format! Use YYYY-MM-DD');
-        return;
-    }
-    closeUserCard();
-    openRejectModal(userId, userName, dateStr);
-};
-
-window.confirmRemoveUserFromCard = async () => {
-    if (!currentUserCard) {
-        console.error('No user card data available');
-        return;
-    }
-    // Store data before any async operations
-    const userId = currentUserCard.userId;
-    const userName = currentUserCard.userName;
-    
-    if (!confirm(`⚠️ DANGER: DELETE USER?\n\nUser: ${userName}\n\nThis will PERMANENTLY delete:\n• User account\n• All sadhana entries\n• All history\n• All notifications\n\nThis action CANNOT be undone!\n\nType the user's name to confirm:`)) return;
-    
-    const confirmName = prompt(`Type user name to confirm deletion:\n\n"${userName}"`);
-    if (confirmName !== userName) {
-        alert('❌ Name does not match. Deletion cancelled.');
-        return;
-    }
-    try {
-        const sadhanaSnapshot = await db.collection('users').doc(userId).collection('sadhana').get();
-        const batch = db.batch();
-        sadhanaSnapshot.forEach(doc => { batch.delete(doc.ref); });
-        await batch.commit();
-        
-        const notifSnapshot = await db.collection('users').doc(userId).collection('notifications').get();
-        const batch2 = db.batch();
-        notifSnapshot.forEach(doc => { batch2.delete(doc.ref); });
-        await batch2.commit();
-        
-        await db.collection('users').doc(userId).delete();
-        alert(`✅ User Deleted!\n\nUser: ${userName}\n\nAll data has been removed.\n\nNote: Please also delete the Firebase Authentication account from Firebase Console.`);
-        closeUserCard();
-        if (typeof loadIndividualReports === 'function') loadIndividualReports();
-    } catch (error) {
-        console.error('Error deleting user:', error);
-        alert('❌ Deletion failed: ' + error.message);
-    }
 };
