@@ -1525,9 +1525,7 @@ async function loadAdminPanel() {
                 <div class="user-meta">${u.level||'Level-1'} · ${u.department||'-'} · ${u.team||'-'} · ${u.chantingCategory||'N/A'} · ${u.exactRounds||'?'} rounds</div>
             </div>
             <div class="user-actions">
-                <button onclick="openUserCard('${uDoc.id}','${safe}')" class="btn-primary btn-sm">View Profile</button>
-                <button onclick="openUserModal('${uDoc.id}','${safe}')" class="btn-success btn-sm">History</button>
-                <button onclick="downloadUserExcel('${uDoc.id}','${safe}')" class="btn-teal btn-sm">Excel</button>
+                <button onclick="openUserCard('${uDoc.id}','${safe}')" class="btn-primary btn-sm">👤 View Profile</button>
                 <select onchange="handleLevelChange('${uDoc.id}', this)"
                     style="padding:6px 10px;border-radius:8px;border:1px solid #ddd;font-size:12px;height:34px;background:white;cursor:pointer;width:auto;margin:2px;">
                     <option value="" disabled selected>Level: ${u.level||'Level-1'}</option>
@@ -2703,7 +2701,8 @@ window.openUserCard = async (userId, userName) => {
 
 window.closeUserCard = () => {
     document.getElementById('user-card-modal').classList.add('hidden');
-    currentUserCard = null;
+    // Don't set to null immediately - let button handlers use it
+    setTimeout(() => { currentUserCard = null; }, 500);
 };
 
 async function calculateUserStats(userId) {
@@ -2737,30 +2736,62 @@ async function calculateUserStats(userId) {
 }
 
 window.openUserHistoryFromCard = () => {
-    if (!currentUserCard) return;
+    if (!currentUserCard) {
+        console.error('No user card data available');
+        return;
+    }
+    // Store data before closing
+    const userId = currentUserCard.userId;
+    const userName = currentUserCard.userName;
     closeUserCard();
-    openUserModal(currentUserCard.userId, currentUserCard.userName);
+    openUserModal(userId, userName);
 };
 
 window.downloadExcelFromCard = () => {
-    if (!currentUserCard) return;
-    downloadUserExcel(currentUserCard.userId, currentUserCard.userName);
+    if (!currentUserCard) {
+        console.error('No user card data available');
+        return;
+    }
+    // Store data before action
+    const userId = currentUserCard.userId;
+    const userName = currentUserCard.userName;
+    downloadUserExcel(userId, userName);
 };
 
 window.viewProgressFromCard = () => {
-    if (!currentUserCard) return;
+    if (!currentUserCard) {
+        console.error('No user card data available');
+        return;
+    }
+    // Store data before closing
+    const userId = currentUserCard.userId;
+    const userName = currentUserCard.userName;
     closeUserCard();
-    openProgressModal(currentUserCard.userId, currentUserCard.userName);
+    openProgressModal(userId, userName);
 };
 
 window.openChangeRoleFromCard = () => {
-    if (!currentUserCard) return;
+    if (!currentUserCard) {
+        console.error('No user card data available');
+        return;
+    }
+    // Store data before closing
+    const userId = currentUserCard.userId;
+    const userName = currentUserCard.userName;
+    const userData = currentUserCard.userData;
     closeUserCard();
-    openRoleModal(currentUserCard.userId, currentUserCard.userName, currentUserCard.userData);
+    openRoleModal(userId, userName, userData);
 };
 
 window.openRejectEntryFromCard = () => {
-    if (!currentUserCard) return;
+    if (!currentUserCard) {
+        console.error('No user card data available');
+        return;
+    }
+    // Store data before closing
+    const userId = currentUserCard.userId;
+    const userName = currentUserCard.userName;
+    
     const dateStr = prompt(`Enter date to reject (YYYY-MM-DD):\n\nExample: ${localDateStr(1)}`);
     if (!dateStr) return;
     if (!/^\d{4}-\d{2}-\d{2}$/.test(dateStr)) {
@@ -2768,31 +2799,38 @@ window.openRejectEntryFromCard = () => {
         return;
     }
     closeUserCard();
-    openRejectModal(currentUserCard.userId, currentUserCard.userName, dateStr);
+    openRejectModal(userId, userName, dateStr);
 };
 
 window.confirmRemoveUserFromCard = async () => {
-    if (!currentUserCard) return;
-    if (!confirm(`⚠️ DANGER: DELETE USER?\n\nUser: ${currentUserCard.userName}\n\nThis will PERMANENTLY delete:\n• User account\n• All sadhana entries\n• All history\n• All notifications\n\nThis action CANNOT be undone!\n\nType the user's name to confirm:`)) return;
+    if (!currentUserCard) {
+        console.error('No user card data available');
+        return;
+    }
+    // Store data before any async operations
+    const userId = currentUserCard.userId;
+    const userName = currentUserCard.userName;
     
-    const confirmName = prompt(`Type user name to confirm deletion:\n\n"${currentUserCard.userName}"`);
-    if (confirmName !== currentUserCard.userName) {
+    if (!confirm(`⚠️ DANGER: DELETE USER?\n\nUser: ${userName}\n\nThis will PERMANENTLY delete:\n• User account\n• All sadhana entries\n• All history\n• All notifications\n\nThis action CANNOT be undone!\n\nType the user's name to confirm:`)) return;
+    
+    const confirmName = prompt(`Type user name to confirm deletion:\n\n"${userName}"`);
+    if (confirmName !== userName) {
         alert('❌ Name does not match. Deletion cancelled.');
         return;
     }
     try {
-        const sadhanaSnapshot = await db.collection('users').doc(currentUserCard.userId).collection('sadhana').get();
+        const sadhanaSnapshot = await db.collection('users').doc(userId).collection('sadhana').get();
         const batch = db.batch();
         sadhanaSnapshot.forEach(doc => { batch.delete(doc.ref); });
         await batch.commit();
         
-        const notifSnapshot = await db.collection('users').doc(currentUserCard.userId).collection('notifications').get();
+        const notifSnapshot = await db.collection('users').doc(userId).collection('notifications').get();
         const batch2 = db.batch();
         notifSnapshot.forEach(doc => { batch2.delete(doc.ref); });
         await batch2.commit();
         
-        await db.collection('users').doc(currentUserCard.userId).delete();
-        alert(`✅ User Deleted!\n\nUser: ${currentUserCard.userName}\n\nAll data has been removed.\n\nNote: Please also delete the Firebase Authentication account from Firebase Console.`);
+        await db.collection('users').doc(userId).delete();
+        alert(`✅ User Deleted!\n\nUser: ${userName}\n\nAll data has been removed.\n\nNote: Please also delete the Firebase Authentication account from Firebase Console.`);
         closeUserCard();
         if (typeof loadIndividualReports === 'function') loadIndividualReports();
     } catch (error) {
