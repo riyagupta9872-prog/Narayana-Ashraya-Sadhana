@@ -2062,7 +2062,7 @@ window.toggleRejectEntry = async (userId, dateStr, isCurrentlyRejected) => {
         // REJECT
         const reason = prompt(`🚫 Reject entry for ${dateStr}?\n\nEnter reason (required):`);
         if (!reason?.trim()) { showToast('Rejection cancelled — reason required', 'warn'); return; }
-        if (!confirm(`Apply −30 penalty and reject this entry?\nReason: ${reason}`)) return;
+        if (!confirm(`Apply −50 penalty and reject this entry?\nReason: ${reason}`)) return;
         try {
             const docSnap = await db.collection('users').doc(userId).collection('sadhana').doc(dateStr).get();
             const d = docSnap.data();
@@ -2073,8 +2073,8 @@ window.toggleRejectEntry = async (userId, dateStr, isCurrentlyRejected) => {
                 rejectionReason: reason.trim(),
                 originalTotalScore: d.totalScore ?? 0,
                 originalDayPercent: d.dayPercent ?? 0,
-                totalScore: -30,
-                dayPercent: -19
+                totalScore: -50,
+                dayPercent: -31
             });
             showToast('🚫 Entry rejected!', 'success');
         } catch(err) { showToast('❌ ' + err.message, 'error'); }
