@@ -213,13 +213,32 @@
         .week-body.open { display: block; }
 
         /* Tables */
-        .data-table { width: 100%; border-collapse: separate; border-spacing: 0; font-size: 12px; }
-        .data-table th, .data-table td { border: 1px solid #e0e0e0; padding: 7px 9px; text-align: center; white-space: nowrap; }
-        .data-table th { background: #f8f9fa; font-weight: 600; font-size: 11px;
-            position: sticky; top: 0; z-index: 3; }
+        .data-table { 
+            width: 100%; 
+            border-collapse: collapse; 
+            border-spacing: 0; 
+            font-size: 12px; 
+            border: 2px solid #333; /* Outside border only */
+        }
+        .data-table th, .data-table td { 
+            border: none; /* No inner borders */
+            padding: 7px 9px; 
+            text-align: center; 
+            white-space: nowrap; 
+        }
+        .data-table th { 
+            background: #fbbf24; /* Yellow header like reference */
+            color: #000;
+            font-weight: 700; 
+            font-size: 11px;
+            position: sticky; 
+            top: 0; 
+            z-index: 3;
+            border-bottom: 2px solid #333; /* Header bottom border */
+        }
         .data-table td:first-child { text-align: left; font-weight: 500;
             position: sticky; left: 0; z-index: 2; background: white; }
-        .data-table th:first-child { position: sticky; left: 0; top: 0; z-index: 4; background: #f8f9fa; }
+        .data-table th:first-child { position: sticky; left: 0; top: 0; z-index: 4; background: #fbbf24; }
 
         /* Modals */
         .modal-overlay { position: fixed; inset: 0; background: rgba(0,0,0,0.72); display: flex; justify-content: center; align-items: center; z-index: 999; padding: 16px; }
@@ -836,13 +855,97 @@ function closeUserGuide() {
                     <select id="sadhana-date" required></select>
 
                     <label class="form-label">Bed Time (Previous Night)</label>
-                    <input type="time" id="sleep-time" required>
+                    <div style="display:flex;gap:8px;align-items:center;">
+                        <select id="sleep-hour" required style="flex:1;padding:10px;border-radius:8px;border:1px solid #ddd;font-size:14px;">
+                            <option value="">HH</option>
+                            <option value="1">1</option>
+                            <option value="2">2</option>
+                            <option value="3">3</option>
+                            <option value="4">4</option>
+                            <option value="5">5</option>
+                            <option value="6">6</option>
+                            <option value="7">7</option>
+                            <option value="8">8</option>
+                            <option value="9">9</option>
+                            <option value="10">10</option>
+                            <option value="11">11</option>
+                            <option value="12">12</option>
+                        </select>
+                        <span style="font-size:18px;font-weight:700;">:</span>
+                        <select id="sleep-minute" required style="flex:1;padding:10px;border-radius:8px;border:1px solid #ddd;font-size:14px;">
+                            <option value="">MM</option>
+                            <option value="00">00</option>
+                            <option value="15">15</option>
+                            <option value="30">30</option>
+                            <option value="45">45</option>
+                        </select>
+                        <select id="sleep-period" required style="flex:0.8;padding:10px;border-radius:8px;border:1px solid #ddd;font-size:14px;">
+                            <option value="PM">PM</option>
+                            <option value="AM">AM</option>
+                        </select>
+                    </div>
 
                     <label class="form-label">Wake Up Time</label>
-                    <input type="time" id="wakeup-time" required>
+                    <div style="display:flex;gap:8px;align-items:center;">
+                        <select id="wakeup-hour" required style="flex:1;padding:10px;border-radius:8px;border:1px solid #ddd;font-size:14px;">
+                            <option value="">HH</option>
+                            <option value="1">1</option>
+                            <option value="2">2</option>
+                            <option value="3">3</option>
+                            <option value="4">4</option>
+                            <option value="5">5</option>
+                            <option value="6">6</option>
+                            <option value="7">7</option>
+                            <option value="8">8</option>
+                            <option value="9">9</option>
+                            <option value="10">10</option>
+                            <option value="11">11</option>
+                            <option value="12">12</option>
+                        </select>
+                        <span style="font-size:18px;font-weight:700;">:</span>
+                        <select id="wakeup-minute" required style="flex:1;padding:10px;border-radius:8px;border:1px solid #ddd;font-size:14px;">
+                            <option value="">MM</option>
+                            <option value="00">00</option>
+                            <option value="15">15</option>
+                            <option value="30">30</option>
+                            <option value="45">45</option>
+                        </select>
+                        <select id="wakeup-period" required style="flex:0.8;padding:10px;border-radius:8px;border:1px solid #ddd;font-size:14px;">
+                            <option value="AM">AM</option>
+                            <option value="PM">PM</option>
+                        </select>
+                    </div>
 
                     <label class="form-label">Chanting Completed By</label>
-                    <input type="time" id="chanting-time" required>
+                    <div style="display:flex;gap:8px;align-items:center;">
+                        <select id="chanting-hour" required style="flex:1;padding:10px;border-radius:8px;border:1px solid #ddd;font-size:14px;">
+                            <option value="">HH</option>
+                            <option value="1">1</option>
+                            <option value="2">2</option>
+                            <option value="3">3</option>
+                            <option value="4">4</option>
+                            <option value="5">5</option>
+                            <option value="6">6</option>
+                            <option value="7">7</option>
+                            <option value="8">8</option>
+                            <option value="9">9</option>
+                            <option value="10">10</option>
+                            <option value="11">11</option>
+                            <option value="12">12</option>
+                        </select>
+                        <span style="font-size:18px;font-weight:700;">:</span>
+                        <select id="chanting-minute" required style="flex:1;padding:10px;border-radius:8px;border:1px solid #ddd;font-size:14px;">
+                            <option value="">MM</option>
+                            <option value="00">00</option>
+                            <option value="15">15</option>
+                            <option value="30">30</option>
+                            <option value="45">45</option>
+                        </select>
+                        <select id="chanting-period" required style="flex:0.8;padding:10px;border-radius:8px;border:1px solid #ddd;font-size:14px;">
+                            <option value="AM">AM</option>
+                            <option value="PM">PM</option>
+                        </select>
+                    </div>
 
                     <label class="form-label">📖 Pathan (Reading) — Minutes</label>
                     <input type="number" id="reading-mins" value="0" min="0" required>
@@ -1097,15 +1200,69 @@ function closeUserGuide() {
         <div class="edit-grid">
             <div class="edit-field-group">
                 <label>Bed Time (Night)</label>
-                <input type="time" id="edit-sleep-time" oninput="updateEditPreview()">
+                <div style="display:flex;gap:4px;">
+                    <select id="edit-sleep-hour" onchange="updateEditPreview()" style="flex:1;padding:8px;border-radius:6px;border:1px solid #ddd;font-size:13px;">
+                        <option value="">HH</option>
+                        <option value="1">1</option><option value="2">2</option><option value="3">3</option>
+                        <option value="4">4</option><option value="5">5</option><option value="6">6</option>
+                        <option value="7">7</option><option value="8">8</option><option value="9">9</option>
+                        <option value="10">10</option><option value="11">11</option><option value="12">12</option>
+                    </select>
+                    <span>:</span>
+                    <select id="edit-sleep-minute" onchange="updateEditPreview()" style="flex:1;padding:8px;border-radius:6px;border:1px solid #ddd;font-size:13px;">
+                        <option value="">MM</option>
+                        <option value="00">00</option><option value="15">15</option>
+                        <option value="30">30</option><option value="45">45</option>
+                    </select>
+                    <select id="edit-sleep-period" onchange="updateEditPreview()" style="flex:0.7;padding:8px;border-radius:6px;border:1px solid #ddd;font-size:13px;">
+                        <option value="">--</option>
+                        <option value="PM">PM</option><option value="AM">AM</option>
+                    </select>
+                </div>
             </div>
             <div class="edit-field-group">
                 <label>Wake Up Time</label>
-                <input type="time" id="edit-wakeup-time" oninput="updateEditPreview()">
+                <div style="display:flex;gap:4px;">
+                    <select id="edit-wakeup-hour" onchange="updateEditPreview()" style="flex:1;padding:8px;border-radius:6px;border:1px solid #ddd;font-size:13px;">
+                        <option value="">HH</option>
+                        <option value="1">1</option><option value="2">2</option><option value="3">3</option>
+                        <option value="4">4</option><option value="5">5</option><option value="6">6</option>
+                        <option value="7">7</option><option value="8">8</option><option value="9">9</option>
+                        <option value="10">10</option><option value="11">11</option><option value="12">12</option>
+                    </select>
+                    <span>:</span>
+                    <select id="edit-wakeup-minute" onchange="updateEditPreview()" style="flex:1;padding:8px;border-radius:6px;border:1px solid #ddd;font-size:13px;">
+                        <option value="">MM</option>
+                        <option value="00">00</option><option value="15">15</option>
+                        <option value="30">30</option><option value="45">45</option>
+                    </select>
+                    <select id="edit-wakeup-period" onchange="updateEditPreview()" style="flex:0.7;padding:8px;border-radius:6px;border:1px solid #ddd;font-size:13px;">
+                        <option value="">--</option>
+                        <option value="AM">AM</option><option value="PM">PM</option>
+                    </select>
+                </div>
             </div>
             <div class="edit-field-group">
                 <label>Chanting Completed By</label>
-                <input type="time" id="edit-chanting-time" oninput="updateEditPreview()">
+                <div style="display:flex;gap:4px;">
+                    <select id="edit-chanting-hour" onchange="updateEditPreview()" style="flex:1;padding:8px;border-radius:6px;border:1px solid #ddd;font-size:13px;">
+                        <option value="">HH</option>
+                        <option value="1">1</option><option value="2">2</option><option value="3">3</option>
+                        <option value="4">4</option><option value="5">5</option><option value="6">6</option>
+                        <option value="7">7</option><option value="8">8</option><option value="9">9</option>
+                        <option value="10">10</option><option value="11">11</option><option value="12">12</option>
+                    </select>
+                    <span>:</span>
+                    <select id="edit-chanting-minute" onchange="updateEditPreview()" style="flex:1;padding:8px;border-radius:6px;border:1px solid #ddd;font-size:13px;">
+                        <option value="">MM</option>
+                        <option value="00">00</option><option value="15">15</option>
+                        <option value="30">30</option><option value="45">45</option>
+                    </select>
+                    <select id="edit-chanting-period" onchange="updateEditPreview()" style="flex:0.7;padding:8px;border-radius:6px;border:1px solid #ddd;font-size:13px;">
+                        <option value="">--</option>
+                        <option value="AM">AM</option><option value="PM">PM</option>
+                    </select>
+                </div>
             </div>
             <div class="edit-field-group">
                 <label>Day Sleep (mins)</label>
