@@ -172,7 +172,22 @@
             letter-spacing: 0.5px;
         }
 
-        /* ── USER GUIDE MODAL ── */
+        /* ── AM/PM TIME PICKER ── */
+        .time-picker-row {
+            display: flex; gap: 5px; margin: 5px 0;
+        }
+        .time-picker-row select {
+            flex: 1; padding: 10px 6px; margin: 0;
+            border: 1px solid #ddd; border-radius: 8px;
+            font-size: 14px; background: white;
+            text-align: center; cursor: pointer;
+        }
+        .time-picker-row select:focus {
+            outline: none; border-color: var(--secondary);
+            box-shadow: 0 0 0 3px rgba(52,152,219,0.1);
+        }
+        .tp-ampm { max-width: 68px !important; font-weight: 700; color: #1A3C5E; }
+
         .guide-section { margin-bottom: 20px; }
         .guide-section h3 { font-size: 14px; font-weight: 700; color: #1A3C5E; margin-bottom: 8px; padding-bottom: 4px; border-bottom: 2px solid #e0e7ff; }
         .guide-row { display: flex; gap: 8px; margin-bottom: 6px; font-size: 13px; }
@@ -836,13 +851,16 @@ function closeUserGuide() {
                     <select id="sadhana-date" required></select>
 
                     <label class="form-label">Bed Time (Previous Night)</label>
-                    <input type="time" id="sleep-time" required>
+                    <div class="time-picker-row" id="sleep-time-picker"></div>
+                    <input type="hidden" id="sleep-time">
 
                     <label class="form-label">Wake Up Time</label>
-                    <input type="time" id="wakeup-time" required>
+                    <div class="time-picker-row" id="wakeup-time-picker"></div>
+                    <input type="hidden" id="wakeup-time">
 
                     <label class="form-label">Chanting Completed By</label>
-                    <input type="time" id="chanting-time" required>
+                    <div class="time-picker-row" id="chanting-time-picker"></div>
+                    <input type="hidden" id="chanting-time">
 
                     <label class="form-label">📖 Pathan (Reading) — Minutes</label>
                     <input type="number" id="reading-mins" value="0" min="0" required>
@@ -1097,15 +1115,18 @@ function closeUserGuide() {
         <div class="edit-grid">
             <div class="edit-field-group">
                 <label>Bed Time (Night)</label>
-                <input type="time" id="edit-sleep-time" oninput="updateEditPreview()">
+                <div class="time-picker-row" id="edit-sleep-time-picker"></div>
+                <input type="hidden" id="edit-sleep-time">
             </div>
             <div class="edit-field-group">
                 <label>Wake Up Time</label>
-                <input type="time" id="edit-wakeup-time" oninput="updateEditPreview()">
+                <div class="time-picker-row" id="edit-wakeup-time-picker"></div>
+                <input type="hidden" id="edit-wakeup-time">
             </div>
             <div class="edit-field-group">
                 <label>Chanting Completed By</label>
-                <input type="time" id="edit-chanting-time" oninput="updateEditPreview()">
+                <div class="time-picker-row" id="edit-chanting-time-picker"></div>
+                <input type="hidden" id="edit-chanting-time">
             </div>
             <div class="edit-field-group">
                 <label>Day Sleep (mins)</label>
