@@ -49,6 +49,51 @@ window.populateDeptTeams = (selectId, dept, selected = '') => {
     }
 };
 
+// ═══════════════════════════════════════════════════════════
+// TIME FORMAT HELPERS (12-hour AM/PM)
+// ═══════════════════════════════════════════════════════════
+
+// Convert 24-hour (23:30) to 12-hour AM/PM (11:30 PM)
+function format12Hour(time24) {
+    if (!time24 || time24 === 'NR') return 'NR';
+    const [h, m] = time24.split(':').map(Number);
+    if (isNaN(h) || isNaN(m)) return time24;
+    
+    const period = h >= 12 ? 'PM' : 'AM';
+    const hour12 = h === 0 ? 12 : h > 12 ? h - 12 : h;
+    return `${hour12}:${String(m).padStart(2, '0')} ${period}`;
+}
+
+// Convert 12-hour AM/PM back to 24-hour for storage
+function convert12to24(hour12, minute, period) {
+    if (!hour12 || !minute || !period) return '';
+    let h = parseInt(hour12);
+    const m = String(minute).padStart(2, '0');
+    
+    if (period === 'AM') {
+        h = h === 12 ? 0 : h;
+    } else { // PM
+        h = h === 12 ? 12 : h + 12;
+    }
+    
+    return `${String(h).padStart(2, '0')}:${m}`;
+}
+
+// Parse 24-hour time to hour, minute, period for dropdowns
+function parse24Hour(time24) {
+    if (!time24 || time24 === 'NR') return { hour: '', minute: '', period: '' };
+    const [h, m] = time24.split(':').map(Number);
+    if (isNaN(h) || isNaN(m)) return { hour: '', minute: '', period: '' };
+    
+    const period = h >= 12 ? 'PM' : 'AM';
+    const hour12 = h === 0 ? 12 : h > 12 ? h - 12 : h;
+    return { 
+        hour: String(hour12), 
+        minute: String(m).padStart(2, '0'), 
+        period 
+    };
+}
+
 // What users this admin can see
 function getAdminScope() {
     if (isSuperAdmin()) return { type: 'all' };
@@ -400,9 +445,9 @@ window.downloadUserExcel = async (userId, userName) => {
 
                 const row = [
                     lbl,
-                    e.sleepTime||'NR',    e.scores?.sleep??0,
-                    e.wakeupTime||'NR',   e.scores?.wakeup??0,
-                    e.chantingTime||'NR', e.scores?.chanting??0,
+                    format12Hour(e.sleepTime||'NR'),    e.scores?.sleep??0,
+                    format12Hour(e.wakeupTime||'NR'),   e.scores?.wakeup??0,
+                    format12Hour(e.chantingTime||'NR'), e.scores?.chanting??0,
                     e.readingMinutes||0,  e.scores?.reading??0,
                     e.hearingMinutes||0,  e.scores?.hearing??0,
                     e.instrumentMinutes||0, e.scores?.instrument??0,
@@ -965,9 +1010,9 @@ function loadReports(userId, containerId) {
 
                         return `<tr style="background:${rowBg};">
                             <td style="font-weight:600;">${e.id.split('-').slice(1).reverse().join('/')}${editedBadge}</td>
-                            <td style="${isNR?'color:#b91c1c;font-weight:700;':''}">${e.sleepTime||'NR'}</td>${mkS(sc.sleep??0)}
-                            <td style="${isNR?'color:#b91c1c;':''}">${e.wakeupTime||'NR'}</td>${mkS(sc.wakeup??0)}
-                            <td>${e.chantingTime||'NR'}</td>${mkS(sc.chanting??0)}
+                            <td style="${isNR?'color:#b91c1c;font-weight:700;':''}">${format12Hour(e.sleepTime||'NR')}</td>${mkS(sc.sleep??0)}
+                            <td style="${isNR?'color:#b91c1c;':''}">${format12Hour(e.wakeupTime||'NR')}</td>${mkS(sc.wakeup??0)}
+                            <td>${format12Hour(e.chantingTime||'NR')}</td>${mkS(sc.chanting??0)}
                             <td>${e.readingMinutes||0}m</td>${mkBest(patS, patIsBest)}
                             <td>${e.hearingMinutes||0}m</td>${mkBest(hearS, hearIsBest)}
                             <td>${e.instrumentMinutes||0}m</td>${mkS(sc.instrument??0)}
@@ -1163,9 +1208,23 @@ document.getElementById('sadhana-form').onsubmit = async (e) => {
     const level = userProfile.level || 'Level-1';
     const dept  = userProfile.department || '';
     const instrument = userProfile.instrument || '';
-    let slp     = document.getElementById('sleep-time').value;
-    const wak   = document.getElementById('wakeup-time').value;
-    const chn   = document.getElementById('chanting-time').value;
+    
+    // Get time values from dropdowns and convert to 24-hour format
+    const slpHr = document.getElementById('sleep-hour')?.value;
+    const slpMin = document.getElementById('sleep-minute')?.value;
+    const slpPer = document.getElementById('sleep-period')?.value;
+    let slp = convert12to24(slpHr, slpMin, slpPer);
+    
+    const wakHr = document.getElementById('wakeup-hour')?.value;
+    const wakMin = document.getElementById('wakeup-minute')?.value;
+    const wakPer = document.getElementById('wakeup-period')?.value;
+    const wak = convert12to24(wakHr, wakMin, wakPer);
+    
+    const chnHr = document.getElementById('chanting-hour')?.value;
+    const chnMin = document.getElementById('chanting-minute')?.value;
+    const chnPer = document.getElementById('chanting-period')?.value;
+    const chn = convert12to24(chnHr, chnMin, chnPer);
+    
     const rMin  = parseInt(document.getElementById('reading-mins').value)||0;
     const hMin  = parseInt(document.getElementById('hearing-mins').value)||0;
     const sMin  = parseInt(document.getElementById('service-mins')?.value)||0;
@@ -1707,9 +1766,22 @@ window.openEditModal = async (userId, date) => {
     document.getElementById('edit-user-level').value = uLevel;
 
     // Populate fields
-    document.getElementById('edit-sleep-time').value      = d.sleepTime      || '';
-    document.getElementById('edit-wakeup-time').value     = d.wakeupTime     || '';
-    document.getElementById('edit-chanting-time').value   = d.chantingTime   || '';
+    // Parse and populate time dropdowns
+    const sleepParsed = parse24Hour(d.sleepTime || '');
+    document.getElementById('edit-sleep-hour').value = sleepParsed.hour;
+    document.getElementById('edit-sleep-minute').value = sleepParsed.minute;
+    document.getElementById('edit-sleep-period').value = sleepParsed.period;
+    
+    const wakeupParsed = parse24Hour(d.wakeupTime || '');
+    document.getElementById('edit-wakeup-hour').value = wakeupParsed.hour;
+    document.getElementById('edit-wakeup-minute').value = wakeupParsed.minute;
+    document.getElementById('edit-wakeup-period').value = wakeupParsed.period;
+    
+    const chantingParsed = parse24Hour(d.chantingTime || '');
+    document.getElementById('edit-chanting-hour').value = chantingParsed.hour;
+    document.getElementById('edit-chanting-minute').value = chantingParsed.minute;
+    document.getElementById('edit-chanting-period').value = chantingParsed.period;
+    
     document.getElementById('edit-reading-mins').value    = d.readingMinutes  || 0;
     document.getElementById('edit-hearing-mins').value    = d.hearingMinutes  || 0;
     document.getElementById('edit-service-mins').value    = d.serviceMinutes  || 0;
@@ -1734,9 +1806,21 @@ window.closeEditModal = () => {
 };
 
 window.updateEditPreview = () => {
-    const slp   = document.getElementById('edit-sleep-time').value;
-    const wak   = document.getElementById('edit-wakeup-time').value;
-    const chn   = document.getElementById('edit-chanting-time').value;
+    const slpHr = document.getElementById('edit-sleep-hour')?.value;
+    const slpMin = document.getElementById('edit-sleep-minute')?.value;
+    const slpPer = document.getElementById('edit-sleep-period')?.value;
+    const slp = convert12to24(slpHr, slpMin, slpPer);
+    
+    const wakHr = document.getElementById('edit-wakeup-hour')?.value;
+    const wakMin = document.getElementById('edit-wakeup-minute')?.value;
+    const wakPer = document.getElementById('edit-wakeup-period')?.value;
+    const wak = convert12to24(wakHr, wakMin, wakPer);
+    
+    const chnHr = document.getElementById('edit-chanting-hour')?.value;
+    const chnMin = document.getElementById('edit-chanting-minute')?.value;
+    const chnPer = document.getElementById('edit-chanting-period')?.value;
+    const chn = convert12to24(chnHr, chnMin, chnPer);
+    
     const rMin  = parseInt(document.getElementById('edit-reading-mins').value)||0;
     const hMin  = parseInt(document.getElementById('edit-hearing-mins').value)||0;
     const sMin  = parseInt(document.getElementById('edit-service-mins').value)||0;
@@ -1755,9 +1839,21 @@ window.updateEditPreview = () => {
 window.submitEditSadhana = async () => {
     if (!isSuperAdmin() || !editModalUserId || !editModalDate) return;
 
-    const slp   = document.getElementById('edit-sleep-time').value;
-    const wak   = document.getElementById('edit-wakeup-time').value;
-    const chn   = document.getElementById('edit-chanting-time').value;
+    const slpHr = document.getElementById('edit-sleep-hour')?.value;
+    const slpMin = document.getElementById('edit-sleep-minute')?.value;
+    const slpPer = document.getElementById('edit-sleep-period')?.value;
+    const slp = convert12to24(slpHr, slpMin, slpPer);
+    
+    const wakHr = document.getElementById('edit-wakeup-hour')?.value;
+    const wakMin = document.getElementById('edit-wakeup-minute')?.value;
+    const wakPer = document.getElementById('edit-wakeup-period')?.value;
+    const wak = convert12to24(wakHr, wakMin, wakPer);
+    
+    const chnHr = document.getElementById('edit-chanting-hour')?.value;
+    const chnMin = document.getElementById('edit-chanting-minute')?.value;
+    const chnPer = document.getElementById('edit-chanting-period')?.value;
+    const chn = convert12to24(chnHr, chnMin, chnPer);
+    
     const rMin  = parseInt(document.getElementById('edit-reading-mins').value)||0;
     const hMin  = parseInt(document.getElementById('edit-hearing-mins').value)||0;
     const sMin  = parseInt(document.getElementById('edit-service-mins').value)||0;
