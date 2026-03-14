@@ -215,26 +215,24 @@
         /* Tables */
         .data-table { 
             width: 100%; 
-            border-collapse: collapse; 
-            border-spacing: 0; 
+            border-collapse: collapse;
             font-size: 12px; 
-            border: 2px solid #333; /* Outside border only */
+            border: 2px solid #d97706; /* Outside border */
         }
         .data-table th, .data-table td { 
-            border: none; /* No inner borders */
+            border: 1px solid #e5e7eb; /* Inner borders - light gray */
             padding: 7px 9px; 
             text-align: center; 
             white-space: nowrap; 
         }
         .data-table th { 
-            background: #fbbf24; /* Yellow header like reference */
+            background: #fbbf24; /* Yellow/orange header */
             color: #000;
             font-weight: 700; 
             font-size: 11px;
             position: sticky; 
             top: 0; 
             z-index: 3;
-            border-bottom: 2px solid #333; /* Header bottom border */
         }
         .data-table td:first-child { text-align: left; font-weight: 500;
             position: sticky; left: 0; z-index: 2; background: white; }
@@ -872,13 +870,7 @@ function closeUserGuide() {
                             <option value="12">12</option>
                         </select>
                         <span style="font-size:18px;font-weight:700;">:</span>
-                        <select id="sleep-minute" required style="flex:1;padding:10px;border-radius:8px;border:1px solid #ddd;font-size:14px;">
-                            <option value="">MM</option>
-                            <option value="00">00</option>
-                            <option value="15">15</option>
-                            <option value="30">30</option>
-                            <option value="45">45</option>
-                        </select>
+                        <input type="number" id="sleep-minute" min="0" max="59" placeholder="MM" required style="flex:1;padding:10px;border-radius:8px;border:1px solid #ddd;font-size:14px;text-align:center;">
                         <select id="sleep-period" required style="flex:0.8;padding:10px;border-radius:8px;border:1px solid #ddd;font-size:14px;">
                             <option value="PM">PM</option>
                             <option value="AM">AM</option>
@@ -903,13 +895,7 @@ function closeUserGuide() {
                             <option value="12">12</option>
                         </select>
                         <span style="font-size:18px;font-weight:700;">:</span>
-                        <select id="wakeup-minute" required style="flex:1;padding:10px;border-radius:8px;border:1px solid #ddd;font-size:14px;">
-                            <option value="">MM</option>
-                            <option value="00">00</option>
-                            <option value="15">15</option>
-                            <option value="30">30</option>
-                            <option value="45">45</option>
-                        </select>
+                        <input type="number" id="wakeup-minute" min="0" max="59" placeholder="MM" required style="flex:1;padding:10px;border-radius:8px;border:1px solid #ddd;font-size:14px;text-align:center;">
                         <select id="wakeup-period" required style="flex:0.8;padding:10px;border-radius:8px;border:1px solid #ddd;font-size:14px;">
                             <option value="AM">AM</option>
                             <option value="PM">PM</option>
@@ -934,13 +920,7 @@ function closeUserGuide() {
                             <option value="12">12</option>
                         </select>
                         <span style="font-size:18px;font-weight:700;">:</span>
-                        <select id="chanting-minute" required style="flex:1;padding:10px;border-radius:8px;border:1px solid #ddd;font-size:14px;">
-                            <option value="">MM</option>
-                            <option value="00">00</option>
-                            <option value="15">15</option>
-                            <option value="30">30</option>
-                            <option value="45">45</option>
-                        </select>
+                        <input type="number" id="chanting-minute" min="0" max="59" placeholder="MM" required style="flex:1;padding:10px;border-radius:8px;border:1px solid #ddd;font-size:14px;text-align:center;">
                         <select id="chanting-period" required style="flex:0.8;padding:10px;border-radius:8px;border:1px solid #ddd;font-size:14px;">
                             <option value="AM">AM</option>
                             <option value="PM">PM</option>
@@ -1209,11 +1189,7 @@ function closeUserGuide() {
                         <option value="10">10</option><option value="11">11</option><option value="12">12</option>
                     </select>
                     <span>:</span>
-                    <select id="edit-sleep-minute" onchange="updateEditPreview()" style="flex:1;padding:8px;border-radius:6px;border:1px solid #ddd;font-size:13px;">
-                        <option value="">MM</option>
-                        <option value="00">00</option><option value="15">15</option>
-                        <option value="30">30</option><option value="45">45</option>
-                    </select>
+                    <input type="number" id="edit-sleep-minute" min="0" max="59" placeholder="MM" oninput="updateEditPreview()" style="flex:1;padding:8px;border-radius:6px;border:1px solid #ddd;font-size:13px;text-align:center;">
                     <select id="edit-sleep-period" onchange="updateEditPreview()" style="flex:0.7;padding:8px;border-radius:6px;border:1px solid #ddd;font-size:13px;">
                         <option value="">--</option>
                         <option value="PM">PM</option><option value="AM">AM</option>
@@ -1231,11 +1207,7 @@ function closeUserGuide() {
                         <option value="10">10</option><option value="11">11</option><option value="12">12</option>
                     </select>
                     <span>:</span>
-                    <select id="edit-wakeup-minute" onchange="updateEditPreview()" style="flex:1;padding:8px;border-radius:6px;border:1px solid #ddd;font-size:13px;">
-                        <option value="">MM</option>
-                        <option value="00">00</option><option value="15">15</option>
-                        <option value="30">30</option><option value="45">45</option>
-                    </select>
+                    <input type="number" id="edit-wakeup-minute" min="0" max="59" placeholder="MM" oninput="updateEditPreview()" style="flex:1;padding:8px;border-radius:6px;border:1px solid #ddd;font-size:13px;text-align:center;">
                     <select id="edit-wakeup-period" onchange="updateEditPreview()" style="flex:0.7;padding:8px;border-radius:6px;border:1px solid #ddd;font-size:13px;">
                         <option value="">--</option>
                         <option value="AM">AM</option><option value="PM">PM</option>
@@ -1253,11 +1225,7 @@ function closeUserGuide() {
                         <option value="10">10</option><option value="11">11</option><option value="12">12</option>
                     </select>
                     <span>:</span>
-                    <select id="edit-chanting-minute" onchange="updateEditPreview()" style="flex:1;padding:8px;border-radius:6px;border:1px solid #ddd;font-size:13px;">
-                        <option value="">MM</option>
-                        <option value="00">00</option><option value="15">15</option>
-                        <option value="30">30</option><option value="45">45</option>
-                    </select>
+                    <input type="number" id="edit-chanting-minute" min="0" max="59" placeholder="MM" oninput="updateEditPreview()" style="flex:1;padding:8px;border-radius:6px;border:1px solid #ddd;font-size:13px;text-align:center;">
                     <select id="edit-chanting-period" onchange="updateEditPreview()" style="flex:0.7;padding:8px;border-radius:6px;border:1px solid #ddd;font-size:13px;">
                         <option value="">--</option>
                         <option value="AM">AM</option><option value="PM">PM</option>
