@@ -19,7 +19,114 @@ let userProfile    = null;
 let activeListener = null;
 
 // ═══════════════════════════════════════════════════════════
-// 2. ROLE HELPERS
+// TIME PICKER HELPERS — AM/PM custom dropdowns
+// ═══════════════════════════════════════════════════════════
+
+// Build AM/PM time picker into a container div
+// hiddenId = id of hidden input that stores HH:MM (24hr) value
+// onChange  = optional callback after value changes
+function buildTimePicker(containerId, hiddenId, onChange) {
+    const container = document.getElementById(containerId);
+    if (!container) return;
+
+    // Hour select (1–12)
+    const hourSel = document.createElement('select');
+    hourSel.className = 'tp-hour';
+    const hBlank = document.createElement('option');
+    hBlank.value = ''; hBlank.textContent = 'HH'; hBlank.disabled = true; hBlank.selected = true;
+    hourSel.appendChild(hBlank);
+    for (let h = 1; h <= 12; h++) {
+        const o = document.createElement('option');
+        o.value = String(h); o.textContent = String(h).padStart(2,'0');
+        hourSel.appendChild(o);
+    }
+
+    // Minute select (00, 05, 10 ... 55)
+    const minSel = document.createElement('select');
+    minSel.className = 'tp-min';
+    const mBlank = document.createElement('option');
+    mBlank.value = ''; mBlank.textContent = 'MM'; mBlank.disabled = true; mBlank.selected = true;
+    minSel.appendChild(mBlank);
+    for (let m = 0; m < 60; m += 5) {
+        const o = document.createElement('option');
+        o.value = String(m); o.textContent = String(m).padStart(2,'0');
+        minSel.appendChild(o);
+    }
+
+    // AM/PM select
+    const ampmSel = document.createElement('select');
+    ampmSel.className = 'tp-ampm';
+    ['AM','PM'].forEach(v => {
+        const o = document.createElement('option');
+        o.value = v; o.textContent = v;
+        ampmSel.appendChild(o);
+    });
+
+    // Update hidden input on any change
+    function syncHidden() {
+        const h = hourSel.value;
+        const m = minSel.value;
+        const ap = ampmSel.value;
+        if (!h || m === '') { document.getElementById(hiddenId).value = ''; if (onChange) onChange(''); return; }
+        let hr24 = parseInt(h);
+        if (ap === 'AM' && hr24 === 12) hr24 = 0;
+        if (ap === 'PM' && hr24 !== 12) hr24 += 12;
+        const val = String(hr24).padStart(2,'0') + ':' + String(m).padStart(2,'0');
+        document.getElementById(hiddenId).value = val;
+        if (onChange) onChange(val);
+    }
+
+    hourSel.addEventListener('change', syncHidden);
+    minSel.addEventListener('change', syncHidden);
+    ampmSel.addEventListener('change', syncHidden);
+
+    container.innerHTML = '';
+    container.appendChild(hourSel);
+    container.appendChild(minSel);
+    container.appendChild(ampmSel);
+}
+
+// Set time picker value from HH:MM 24hr string
+function setTimePicker(containerId, hiddenId, val24) {
+    const container = document.getElementById(containerId);
+    if (!container) return;
+    const hourSel = container.querySelector('.tp-hour');
+    const minSel  = container.querySelector('.tp-min');
+    const ampmSel = container.querySelector('.tp-ampm');
+    if (!hourSel || !minSel || !ampmSel) return;
+
+    if (!val24 || val24 === 'NR' || !val24.includes(':')) {
+        hourSel.value = ''; minSel.value = ''; ampmSel.value = 'AM';
+        document.getElementById(hiddenId).value = '';
+        return;
+    }
+    const [h24str, mStr] = val24.split(':');
+    let h24 = parseInt(h24str);
+    const m  = parseInt(mStr);
+    const ap = h24 < 12 ? 'AM' : 'PM';
+    let h12 = h24 % 12; if (h12 === 0) h12 = 12;
+
+    // Find closest minute option (round to nearest 5)
+    const mRounded = Math.round(m / 5) * 5 % 60;
+
+    hourSel.value  = String(h12);
+    minSel.value   = String(mRounded);
+    ampmSel.value  = ap;
+    document.getElementById(hiddenId).value = val24;
+}
+
+// Convert HH:MM (24hr) → "H:MM AM/PM" display string
+function fmt12(t) {
+    if (!t || t === 'NR') return t || 'NR';
+    const [h24str, mStr] = t.split(':');
+    let h24 = parseInt(h24str);
+    const m  = mStr || '00';
+    const ap = h24 < 12 ? 'AM' : 'PM';
+    let h12 = h24 % 12; if (h12 === 0) h12 = 12;
+    return `${h12}:${m} ${ap}`;
+}
+
+
 // ═══════════════════════════════════════════════════════════
 const isSuperAdmin    = () => userProfile?.role === 'superAdmin';
 const isDeptAdmin     = () => userProfile?.role === 'deptAdmin';
@@ -400,9 +507,9 @@ window.downloadUserExcel = async (userId, userName) => {
 
                 const row = [
                     lbl,
-                    e.sleepTime||'NR',    e.scores?.sleep??0,
-                    e.wakeupTime||'NR',   e.scores?.wakeup??0,
-                    e.chantingTime||'NR', e.scores?.chanting??0,
+                    fmt12(e.sleepTime||'NR'),    e.scores?.sleep??0,
+                    fmt12(e.wakeupTime||'NR'),   e.scores?.wakeup??0,
+                    fmt12(e.chantingTime||'NR'), e.scores?.chanting??0,
                     e.readingMinutes||0,  e.scores?.reading??0,
                     e.hearingMinutes||0,  e.scores?.hearing??0,
                     e.instrumentMinutes||0, e.scores?.instrument??0,
@@ -708,6 +815,10 @@ function initDashboard() {
     } else {
         switchTab('sadhana');
         setupDateSelect();
+        // Build AM/PM time pickers for entry form
+        buildTimePicker('sleep-time-picker',    'sleep-time',    null);
+        buildTimePicker('wakeup-time-picker',   'wakeup-time',   null);
+        buildTimePicker('chanting-time-picker', 'chanting-time', null);
         refreshFormFields();
     }
     if (window._initNotifications && !isAnyAdmin()) window._initNotifications();
@@ -930,8 +1041,8 @@ function loadReports(userId, containerId) {
                         const editedBadge = e.editedAt
                             ? `<span class="edited-badge" onclick="showEditHistory(event,'${e.id}','${userId}')" title="View edit history">✏️</span>` : '';
                         const editBtn = isSuperAdmin()
-                            ? `<button onclick="openEditModal('${userId}','${e.id}')" class="btn-edit-cell">Edit</button>
-                               <button onclick="toggleRejectEntry('${userId}','${e.id}',${isRejected})" class="btn-edit-cell" style="background:${isRejected?'#16a34a':'#dc2626'} !important;">${isRejected?'✅ Restore':'🚫 Reject'}</button>` : '';
+                            ? `<button onclick="openEditModal('${userId}','${e.id}')" class="btn-edit-cell">${isNR ? '📝 Fill' : 'Edit'}</button>
+                               ${!isNR ? `<button onclick="toggleRejectEntry('${userId}','${e.id}',${isRejected})" class="btn-edit-cell" style="background:${isRejected?'#16a34a':'#dc2626'} !important;">${isRejected?'✅ Restore':'🚫 Reject'}</button>` : ''}` : '';
 
                         // Best of pathan/hearing
                         const patS  = sc.reading??0;
@@ -965,9 +1076,9 @@ function loadReports(userId, containerId) {
 
                         return `<tr style="background:${rowBg};">
                             <td style="font-weight:600;">${e.id.split('-').slice(1).reverse().join('/')}${editedBadge}</td>
-                            <td style="${isNR?'color:#b91c1c;font-weight:700;':''}">${e.sleepTime||'NR'}</td>${mkS(sc.sleep??0)}
-                            <td style="${isNR?'color:#b91c1c;':''}">${e.wakeupTime||'NR'}</td>${mkS(sc.wakeup??0)}
-                            <td>${e.chantingTime||'NR'}</td>${mkS(sc.chanting??0)}
+                            <td style="${isNR?'color:#b91c1c;font-weight:700;':''}">${fmt12(e.sleepTime||'NR')}</td>${mkS(sc.sleep??0)}
+                            <td style="${isNR?'color:#b91c1c;':''}">${fmt12(e.wakeupTime||'NR')}</td>${mkS(sc.wakeup??0)}
+                            <td>${fmt12(e.chantingTime||'NR')}</td>${mkS(sc.chanting??0)}
                             <td>${e.readingMinutes||0}m</td>${mkBest(patS, patIsBest)}
                             <td>${e.hearingMinutes||0}m</td>${mkBest(hearS, hearIsBest)}
                             <td>${e.instrumentMinutes||0}m</td>${mkS(sc.instrument??0)}
@@ -1166,6 +1277,11 @@ document.getElementById('sadhana-form').onsubmit = async (e) => {
     let slp     = document.getElementById('sleep-time').value;
     const wak   = document.getElementById('wakeup-time').value;
     const chn   = document.getElementById('chanting-time').value;
+
+    if (!slp || !wak || !chn) {
+        showToast('Please select Bed Time, Wake Up Time and Chanting Time', 'error');
+        return;
+    }
     const rMin  = parseInt(document.getElementById('reading-mins').value)||0;
     const hMin  = parseInt(document.getElementById('hearing-mins').value)||0;
     const sMin  = parseInt(document.getElementById('service-mins')?.value)||0;
@@ -1179,7 +1295,7 @@ document.getElementById('sadhana-form').onsubmit = async (e) => {
         const [sh] = slp.split(':').map(Number);
         if (sh >= 4 && sh <= 20) {
             const goAhead = confirm(
-                `⚠️ Bed Time Warning\n\nYou entered "${slp}" as bed time.\nThis looks like a daytime hour.\n\nDid you mean night time? e.g. 23:00 instead of 11:00?\n\nTap OK if "${slp}" is correct.\nTap Cancel to go back and fix it.`
+                `⚠️ Bed Time Warning\n\nYou entered "${fmt12(slp)}" as bed time.\nThis looks like a daytime hour.\n\nDid you mean night time? e.g. 11:00 PM instead of 11:00 AM?\n\nTap OK if "${fmt12(slp)}" is correct.\nTap Cancel to go back and fix it.`
             );
             if (!goAhead) return;
         }
@@ -1696,30 +1812,52 @@ window.openEditModal = async (userId, date) => {
 
     const docRef  = db.collection('users').doc(userId).collection('sadhana').doc(date);
     const docSnap = await docRef.get();
-    if (!docSnap.exists) { alert('Entry not found.'); return; }
 
-    const d = docSnap.data();
-    editModalOriginal = { ...d }; // snapshot of original before edit
+    // NR entries: docSnap may not exist — create a blank NR record to edit
+    let d;
+    if (!docSnap.exists) {
+        // Check if it's an NR day (past day, no entry) — allow editing
+        d = {
+            sleepTime: '', wakeupTime: '', chantingTime: '',
+            readingMinutes: 0, hearingMinutes: 0, serviceMinutes: 0,
+            notesMinutes: 0, daySleepMinutes: 0, instrumentMinutes: 0,
+            totalScore: -30, isNR: true
+        };
+    } else {
+        d = docSnap.data();
+    }
+    editModalOriginal = { ...d };
 
     // Fetch user's level for scoring context
-    const uSnap   = await db.collection('users').doc(userId).get();
-    const uLevel  = uSnap.exists ? (uSnap.data().level || 'Level-4') : 'Level-4';
+    const uSnap  = await db.collection('users').doc(userId).get();
+    const uLevel = uSnap.exists ? (uSnap.data().level || 'Level-4') : 'Level-4';
     document.getElementById('edit-user-level').value = uLevel;
 
-    // Populate fields
-    document.getElementById('edit-sleep-time').value      = d.sleepTime      || '';
-    document.getElementById('edit-wakeup-time').value     = d.wakeupTime     || '';
-    document.getElementById('edit-chanting-time').value   = d.chantingTime   || '';
-    document.getElementById('edit-reading-mins').value    = d.readingMinutes  || 0;
-    document.getElementById('edit-hearing-mins').value    = d.hearingMinutes  || 0;
-    document.getElementById('edit-service-mins').value    = d.serviceMinutes  || 0;
-    document.getElementById('edit-notes-mins').value      = d.notesMinutes    || 0;
-    document.getElementById('edit-day-sleep-mins').value  = d.daySleepMinutes || 0;
-    document.getElementById('edit-reason').value          = '';
+    // Build AM/PM time pickers (rebuild each time modal opens)
+    buildTimePicker('edit-sleep-time-picker',    'edit-sleep-time',    updateEditPreview);
+    buildTimePicker('edit-wakeup-time-picker',   'edit-wakeup-time',   updateEditPreview);
+    buildTimePicker('edit-chanting-time-picker', 'edit-chanting-time', updateEditPreview);
 
-    // Get user name from admin panel context
+    // Set time values (handles NR/empty gracefully)
+    const slpVal = (d.sleepTime    && d.sleepTime    !== 'NR') ? d.sleepTime    : '';
+    const wakVal = (d.wakeupTime   && d.wakeupTime   !== 'NR') ? d.wakeupTime   : '';
+    const chnVal = (d.chantingTime && d.chantingTime !== 'NR') ? d.chantingTime : '';
+    setTimePicker('edit-sleep-time-picker',    'edit-sleep-time',    slpVal);
+    setTimePicker('edit-wakeup-time-picker',   'edit-wakeup-time',   wakVal);
+    setTimePicker('edit-chanting-time-picker', 'edit-chanting-time', chnVal);
+
+    // Populate other fields
+    document.getElementById('edit-reading-mins').value   = d.readingMinutes  || 0;
+    document.getElementById('edit-hearing-mins').value   = d.hearingMinutes  || 0;
+    document.getElementById('edit-service-mins').value   = d.serviceMinutes  || 0;
+    document.getElementById('edit-notes-mins').value     = d.notesMinutes    || 0;
+    document.getElementById('edit-day-sleep-mins').value = d.daySleepMinutes || 0;
+    document.getElementById('edit-reason').value         = '';
+
+    // Title
     const uData = uSnap.exists ? uSnap.data() : {};
-    document.getElementById('edit-modal-title').textContent = `✏️ Edit Sadhana — ${uData.name||userId} · ${date}`;
+    const nrTag = (!docSnap.exists || d.sleepTime === 'NR') ? ' 🔴 NR' : '';
+    document.getElementById('edit-modal-title').textContent = `✏️ Edit Sadhana — ${uData.name||userId} · ${date}${nrTag}`;
 
     // Show/hide notes field based on level
     document.getElementById('edit-notes-row').classList.toggle('hidden', uLevel !== 'Level-4');
@@ -1766,14 +1904,11 @@ window.submitEditSadhana = async () => {
     const reason= document.getElementById('edit-reason').value.trim();
     const level = document.getElementById('edit-user-level').value || 'Level-4';
 
-    if (!slp||!wak||!chn) { alert('Please fill all time fields.'); return; }
+    if (!slp||!wak||!chn) { showToast('Please fill all three time fields', 'error'); return; }
     if (!confirm(`Save changes to ${editModalDate}?\nThis will update scores and log edit history.`)) return;
 
     const { sc, total, dayPercent } = calculateScores(slp, wak, chn, rMin, hMin, sMin, nMin, dsMin, level);
 
-    // Build edit log entry — store original data
-    // NOTE: serverTimestamp() cannot be used inside arrayUnion nested objects
-    // So we use JS Date string for the log entry timestamp instead
     const now = new Date().toISOString();
     const editLog = {
         editedBy:    userProfile.name,
@@ -1789,16 +1924,16 @@ window.submitEditSadhana = async () => {
             serviceMinutes:  editModalOriginal.serviceMinutes  || 0,
             notesMinutes:    editModalOriginal.notesMinutes    || 0,
             daySleepMinutes: editModalOriginal.daySleepMinutes || 0,
-            totalScore:      editModalOriginal.totalScore      || 0,
+            totalScore:      editModalOriginal.totalScore      || -30,
             dayPercent:      editModalOriginal.dayPercent      || 0
         }
     };
 
     try {
         const docRef = db.collection('users').doc(editModalUserId).collection('sadhana').doc(editModalDate);
+        const docSnap = await docRef.get();
 
-        // Step 1: Update all field values (serverTimestamp safe here at top level)
-        await docRef.update({
+        const payload = {
             sleepTime:       slp,
             wakeupTime:      wak,
             chantingTime:    chn,
@@ -1811,14 +1946,22 @@ window.submitEditSadhana = async () => {
             totalScore:      total,
             dayPercent:      dayPercent,
             editedAt:        firebase.firestore.FieldValue.serverTimestamp(),
-            editedBy:        userProfile.name
-        });
+            editedBy:        userProfile.name,
+            editLog:         firebase.firestore.FieldValue.arrayUnion(editLog)
+        };
 
-        // Step 2: Append to editLog array separately
-        // (arrayUnion cannot contain serverTimestamp inside nested objects — so we use ISO string in editLog)
-        await docRef.update({
-            editLog: firebase.firestore.FieldValue.arrayUnion(editLog)
-        });
+        if (!docSnap.exists) {
+            // NR entry — create new doc
+            await docRef.set({
+                ...payload,
+                date: editModalDate,
+                userId: editModalUserId,
+                wasNR: true
+            });
+        } else {
+            // Existing entry — update
+            await docRef.update(payload);
+        }
 
         closeEditModal();
         alert(`✅ Sadhana updated!\nNew Score: ${total} (${dayPercent}%)`);
@@ -1886,8 +2029,13 @@ window.showEditHistory = async (evt, date, userId) => {
             } else {
                 html += `<table class="eh-table"><thead><tr><th>Field</th><th>Before</th><th>After</th></tr></thead><tbody>`;
                 changedFields.forEach(f => {
-                    const oval = o[f.oKey] ?? '—';
-                    const cval = cur[f.cKey] ?? '—';
+                    let oval = o[f.oKey] ?? '—';
+                    let cval = cur[f.cKey] ?? '—';
+                    // Format time fields as AM/PM
+                    if (['sleepTime','wakeupTime','chantingTime'].includes(f.oKey)) {
+                        oval = fmt12(oval);
+                        cval = fmt12(cval);
+                    }
                     html += `<tr><td class="eh-field">${f.label}</td><td class="eh-before">${oval}</td><td class="eh-after">${cval}</td></tr>`;
                 });
                 html += `</tbody></table>`;
@@ -2062,7 +2210,7 @@ window.toggleRejectEntry = async (userId, dateStr, isCurrentlyRejected) => {
         // REJECT
         const reason = prompt(`🚫 Reject entry for ${dateStr}?\n\nEnter reason (required):`);
         if (!reason?.trim()) { showToast('Rejection cancelled — reason required', 'warn'); return; }
-        if (!confirm(`Apply −50 penalty and reject this entry?\nReason: ${reason}`)) return;
+        if (!confirm(`Apply −30 penalty and reject this entry?\nReason: ${reason}`)) return;
         try {
             const docSnap = await db.collection('users').doc(userId).collection('sadhana').doc(dateStr).get();
             const d = docSnap.data();
@@ -2073,8 +2221,8 @@ window.toggleRejectEntry = async (userId, dateStr, isCurrentlyRejected) => {
                 rejectionReason: reason.trim(),
                 originalTotalScore: d.totalScore ?? 0,
                 originalDayPercent: d.dayPercent ?? 0,
-                totalScore: -50,
-                dayPercent: -31
+                totalScore: -30,
+                dayPercent: -19
             });
             showToast('🚫 Entry rejected!', 'success');
         } catch(err) { showToast('❌ ' + err.message, 'error'); }
@@ -2150,7 +2298,13 @@ function refreshFormFields() {
 // Re-check Sunday bonus when date changes
 document.addEventListener('DOMContentLoaded', () => {
     const dateEl = document.getElementById('sadhana-date');
-    if (dateEl) dateEl.addEventListener('change', refreshFormFields);
+    if (dateEl) dateEl.addEventListener('change', () => {
+        refreshFormFields();
+        // Clear time pickers on date change
+        setTimePicker('sleep-time-picker',    'sleep-time',    '');
+        setTimePicker('wakeup-time-picker',   'wakeup-time',   '');
+        setTimePicker('chanting-time-picker', 'chanting-time', '');
+    });
 });
 document.getElementById('profile-form').onsubmit = async (e) => {
     e.preventDefault();
