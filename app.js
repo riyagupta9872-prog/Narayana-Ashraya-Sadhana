@@ -164,7 +164,7 @@ function getAdminScope() {
     return { type: 'self' };
 }
 
-// Filter users by scope
+// Filter users by scope (admin operations)
 function matchesScope(uData) {
     const scope = getAdminScope();
     if (scope.type === 'all')  return true;
@@ -173,13 +173,17 @@ function matchesScope(uData) {
     return false;
 }
 
-// For backward compatibility — level categories visible
-const visibleCategories = () => {
-    if (isSuperAdmin()) return ['Level-1','Level-2','Level-3','Level-4'];
-    if (isDeptAdmin() || isTeamLeader()) return ['Level-1','Level-2','Level-3','Level-4'];
-    return [];
-};
+// Filter users for WCR/Leaderboard visibility
+// Users see their own team; TL=team; DeptAdmin=dept; SA=all
+function matchesViewScope(uData) {
+    if (isSuperAdmin()) return true;
+    if (isDeptAdmin())  return uData.department === userProfile.department;
+    if (isTeamLeader()) return uData.department === userProfile.department && uData.team === userProfile.team;
+    // Regular user — see own team only
+    return uData.department === userProfile.department && uData.team === userProfile.team;
+}
 
+// For backward compatibility — level categories visible
 // ═══════════════════════════════════════════════════════════
 // 3. HELPERS
 // ═══════════════════════════════════════════════════════════
@@ -191,11 +195,13 @@ const t2m = (t, isSleep = false) => {
 };
 
 function getWeekInfo(dateStr) {
-    const d   = new Date(dateStr);
+    const [y,m,dd] = dateStr.split('-').map(Number);
+    const d   = new Date(y, m-1, dd);
     const sun = new Date(d); sun.setDate(d.getDate() - d.getDay());
     const sat = new Date(sun); sat.setDate(sun.getDate() + 6);
     const fmt = dt => `${String(dt.getDate()).padStart(2,'0')} ${dt.toLocaleString('en-GB',{month:'short'})}`;
-    return { sunStr: sun.toISOString().split('T')[0], label: `${fmt(sun)} to ${fmt(sat)}_${sun.getFullYear()}` };
+    const sunStr = `${sun.getFullYear()}-${String(sun.getMonth()+1).padStart(2,'0')}-${String(sun.getDate()).padStart(2,'0')}`;
+    return { sunStr, label: `${fmt(sun)} to ${fmt(sat)}_${sun.getFullYear()}` };
 }
 
 function localDateStr(offsetDays = 0) {
@@ -214,6 +220,25 @@ function getNRData(date) {
 
 function isPastDate(dateStr) {
     return dateStr < localDateStr(0);
+}
+
+function getWeekDates(weekOffset) {
+    const today = new Date();
+    const dayOfWeek = today.getDay();
+    const weekStart = new Date(today);
+    weekStart.setDate(today.getDate() - dayOfWeek - (weekOffset * 7));
+    weekStart.setHours(0,0,0,0);
+    const weekEnd = new Date(weekStart);
+    weekEnd.setDate(weekStart.getDate() + 6);
+    if (weekOffset === 0) {
+        const yesterday = new Date(today); yesterday.setDate(today.getDate() - 1);
+        if (weekEnd > yesterday) weekEnd.setTime(yesterday.getTime());
+    }
+    const toStr = d => `${d.getFullYear()}-${String(d.getMonth()+1).padStart(2,'0')}-${String(d.getDate()).padStart(2,'0')}`;
+    const dates = [];
+    const cur = new Date(weekStart);
+    while (cur <= weekEnd) { dates.push(toStr(cur)); cur.setDate(cur.getDate() + 1); }
+    return { dates, weekStart, weekEnd };
 }
 
 // ─── INSTRUMENT OPTIONS per level ────────────────────────
@@ -656,17 +681,21 @@ window.downloadMasterReport = async () => {
         const userData = [];
         const weekMap = new Map();
 
-        for (const uDoc of usersSnap.docs) {
+        const filteredDocs = usersSnap.docs.filter(uDoc => {
             const u = uDoc.data();
-            if (!matchesScope(u)) continue;
-            const sSnap = await uDoc.ref.collection('sadhana').get();
-            const entries = sSnap.docs.map(d=>({date:d.id, score:d.data().totalScore||0}));
+            if (u.role === 'superAdmin' || u.role === 'deptAdmin' || u.role === 'teamLeader' || u.role === 'admin') return false;
+            return matchesScope(u);
+        });
+        const allSnaps = await Promise.all(filteredDocs.map(uDoc => uDoc.ref.collection('sadhana').get()));
+        filteredDocs.forEach((uDoc, i) => {
+            const u = uDoc.data();
+            const entries = allSnaps[i].docs.map(d=>({date:d.id, score:d.data().totalScore||0}));
             entries.forEach(en => {
                 const wi = getWeekInfo(en.date);
                 weekMap.set(wi.sunStr, wi.label);
             });
             userData.push({ user:u, entries });
-        }
+        });
         userData.sort((a,b)=>(a.user.name||'').localeCompare(b.user.name||''));
 
         // Sort weeks by sunStr descending (newest first) — YYYY-MM-DD sorts perfectly
@@ -740,11 +769,38 @@ window.downloadMasterReport = async () => {
 // ═══════════════════════════════════════════════════════════
 // 5. AUTH
 // ═══════════════════════════════════════════════════════════
+function resetAppState() {
+    try {
+        _userWCRLoaded = false;
+        adminPanelLoaded = false;
+        window._wcrUserList = [];
+        window._adminCmpUserList = [];
+        window._profilePicDataUrl = null;
+        if (typeof myChartInstance !== 'undefined' && myChartInstance) { try { myChartInstance.destroy(); } catch(e){} myChartInstance = null; }
+        if (typeof modalChartInstance !== 'undefined' && modalChartInstance) { try { modalChartInstance.destroy(); } catch(e){} modalChartInstance = null; }
+        if (typeof _aaChartDonut !== 'undefined' && _aaChartDonut) { try { _aaChartDonut.destroy(); } catch(e){} _aaChartDonut = null; }
+        if (typeof _aaChartBar !== 'undefined' && _aaChartBar) { try { _aaChartBar.destroy(); } catch(e){} _aaChartBar = null; }
+        const ubn = document.getElementById('user-bottom-nav');
+        const abn = document.getElementById('admin-bottom-nav');
+        if (ubn) ubn.classList.remove('visible');
+        if (abn) abn.classList.remove('visible');
+        document.body.classList.remove('has-bottom-nav');
+        if (activeListener) { activeListener(); activeListener = null; }
+        if (typeof editModalUserId !== 'undefined') { editModalUserId = null; editModalDate = null; editModalOriginal = null; }
+        if (typeof _uacUID !== 'undefined') { _uacUID = null; _uacName = null; }
+        if (typeof _homeWeekOffset !== 'undefined') _homeWeekOffset = 0;
+        if (typeof _lbMode !== 'undefined') { _lbMode = 'weekly'; _lbLoading = false; }
+        if (typeof _perfAllData !== 'undefined') { _perfAllData = []; _perfTab = 'weekly'; }
+        if (typeof _saHomeLoaded !== 'undefined') _saHomeLoaded = false;
+    } catch(e) { console.warn('resetAppState:', e); }
+}
+
 let _profileUnsub = null;
 auth.onAuthStateChanged((user) => {
     // Unsubscribe previous profile listener
     if (_profileUnsub) { _profileUnsub(); _profileUnsub = null; }
 
+    resetAppState();
     if (user) {
         currentUser = user;
         let _dashboardInited = false;
@@ -788,7 +844,7 @@ function initDashboard() {
                     : `${userProfile.level||'Level-1'} | ${userProfile.department||''} | ${userProfile.team||''}`;
     document.getElementById('user-display-name').textContent = userProfile.name;
     document.getElementById('user-role-display').textContent = roleLabel;
-
+    updateAvatarDisplay(userProfile.photoURL || null, userProfile.name || '');
 
     // Role-based tab visibility
     const userTabs  = document.querySelectorAll('.user-tab');
@@ -804,22 +860,28 @@ function initDashboard() {
     }
 
     showSection('dashboard');
+    // Init bottom nav FIRST so it's visible before any tab switch
+    initBottomNav();
+
     // Default tab based on role
     if (isAnyAdmin()) {
-        switchTab('admin-reports');
+        switchTab('admin-home');
         // Hide notification bell for admins — they don't need sadhana reminders
         const nb = document.getElementById('sidebar-notif-btn');
         if (nb) nb.style.display = 'none';
         const sd = nb && nb.previousElementSibling;
         if (sd && sd.classList.contains('sidebar-divider')) sd.style.display = 'none';
     } else {
-        switchTab('sadhana');
+        // Setup form for users
         setupDateSelect();
-        // Build AM/PM time pickers for entry form
         buildTimePicker('sleep-time-picker',    'sleep-time',    null);
         buildTimePicker('wakeup-time-picker',   'wakeup-time',   null);
         buildTimePicker('chanting-time-picker', 'chanting-time', null);
         refreshFormFields();
+        // Show Manage bnav for deptAdmin/teamLeader
+        const bnavManage = document.getElementById('bnav-manage');
+        if (bnavManage) bnavManage.classList.toggle('hidden', !isAnyAdmin());
+        switchTab('home');
     }
     if (window._initNotifications && !isAnyAdmin()) window._initNotifications();
 }
@@ -828,21 +890,27 @@ function initDashboard() {
 // 6. NAVIGATION
 // ═══════════════════════════════════════════════════════════
 window.switchTab = (t) => {
+    // Map manage to admin for non-SA admins
+    if (t === 'manage') t = 'admin-reports';
+
     // Hide ALL panels
-    ['sadhana-panel','reports-panel','progress-panel','admin-panel'].forEach(id => {
+    ['home-panel','mysadhana-panel','team-panel','admin-panel'].forEach(id => {
         const el = document.getElementById(id);
         if (el) el.classList.remove('active');
     });
     document.querySelectorAll('.tab-btn').forEach(b => b.classList.remove('active'));
 
-    // admin-reports, admin, inactive all use admin-panel with sub-sections
-    if (t === 'admin-reports' || t === 'admin' || t === 'inactive' || t === 'adminmgmt') {
+    // admin tabs all use admin-panel with sub-sections
+    if (t === 'admin-home' || t === 'admin-reports' || t === 'admin' || t === 'inactive' || t === 'adminmgmt' || t === 'admin-tasks' || t === 'admin-leaderboard') {
         const el = document.getElementById('admin-panel');
         if (el) el.classList.add('active');
-        if (t !== 'adminmgmt' && !adminPanelLoaded) { adminPanelLoaded = true; loadAdminPanel(); }
-        const sectionMap = { 'admin-reports': 'reports', 'admin': 'usermgmt', 'inactive': 'inactive', 'adminmgmt': 'adminmgmt' };
+        if (t !== 'adminmgmt' && t !== 'admin-home' && t !== 'admin-tasks' && t !== 'admin-leaderboard' && !adminPanelLoaded) { adminPanelLoaded = true; loadAdminPanel(); }
+        const sectionMap = { 'admin-home': 'home', 'admin-reports': 'reports', 'admin': 'usermgmt', 'inactive': 'inactive', 'adminmgmt': 'adminmgmt', 'admin-tasks': 'tasks', 'admin-leaderboard': 'leaderboard' };
         selectAdminSection(sectionMap[t], null);
         if (t === 'adminmgmt') loadAdminMgmt();
+        if (t === 'admin-home') loadSAHome();
+        if (t === 'admin-tasks') loadSATasks();
+        if (t === 'admin-leaderboard') loadAdminLeaderboard(true);
     } else {
         const panel = document.getElementById(t + '-panel');
         if (panel) panel.classList.add('active');
@@ -851,8 +919,49 @@ window.switchTab = (t) => {
     const btn = document.querySelector(`.tab-btn[onclick*="'${t}'"]`);
     if (btn) btn.classList.add('active');
 
-    if (t === 'reports')  loadReports(currentUser.uid, 'weekly-reports-container');
-    if (t === 'progress') loadMyProgressChart('daily');
+    // Lazy-load data
+    if (t === 'home')       { loadHomePanel(_homeWeekOffset); loadTasks(); }
+    if (t === 'team')       loadLeaderboard(false);
+
+    // Sync bottom nav active state
+    const bnavMap = { home:0, mysadhana:1, team:2, manage:3 };
+    const aBnavMap = { 'admin-home':0, 'admin-reports':1, admin:2, inactive:3, 'admin-leaderboard':4, 'admin-tasks':5 };
+    const userBnav  = document.getElementById('user-bottom-nav');
+    const adminBnav = document.getElementById('admin-bottom-nav');
+    if (userBnav && bnavMap[t] !== undefined) {
+        userBnav.querySelectorAll('.bnav-item').forEach((b,i) => b.classList.toggle('active', i === bnavMap[t]));
+    }
+    if (adminBnav && aBnavMap[t] !== undefined) {
+        adminBnav.querySelectorAll('.bnav-item').forEach((b,i) => b.classList.toggle('active', i === aBnavMap[t]));
+    }
+};
+
+// Sub-tab switchers
+window.switchSadhanaTab = (sub, btn) => {
+    document.querySelectorAll('#mysadhana-panel .subtab-btn').forEach(b => b.classList.remove('active'));
+    document.querySelectorAll('#mysadhana-panel .subtab-panel').forEach(p => p.classList.remove('active'));
+    const panel = document.getElementById('sadhana-' + sub + '-sub');
+    if (panel) panel.classList.add('active');
+    if (btn) btn.classList.add('active');
+    if (sub === 'reports') loadReports(currentUser.uid, 'weekly-reports-container');
+    if (sub === 'progress') loadMyProgressChart('daily');
+};
+
+window.switchTeamTab = (sub, btn) => {
+    document.querySelectorAll('#team-panel .subtab-btn').forEach(b => b.classList.remove('active'));
+    document.querySelectorAll('#team-panel .subtab-panel').forEach(p => p.classList.remove('active'));
+    const panel = document.getElementById('team-' + sub + '-sub');
+    if (panel) panel.classList.add('active');
+    if (btn) btn.classList.add('active');
+    if (sub === 'wcr') loadUserWCR();
+    if (sub === 'rankings') loadLeaderboard(true);
+};
+
+let _homeWeekOffset = 0;
+window.switchHomeWeek = (offset, btn) => {
+    _homeWeekOffset = offset;
+    document.querySelectorAll('#home-week-tabs .chart-tab-btn').forEach((b,i) => b.classList.toggle('active', i === offset));
+    loadHomePanel(offset);
 };
 
 function showSection(sec) {
@@ -862,12 +971,124 @@ function showSection(sec) {
 }
 
 // ═══════════════════════════════════════════════════════════
+// USER WCR (Team/Dept comparative report for regular users)
+// ═══════════════════════════════════════════════════════════
+let _userWCRLoaded = false;
+async function loadUserWCR() {
+    const container = document.getElementById('user-wcr-container');
+    if (!container) return;
+    if (_userWCRLoaded) return;
+    _userWCRLoaded = true;
+    container.innerHTML = '<p style="color:#aaa;text-align:center;padding:20px;">Loading…</p>';
+
+    try {
+        const usersSnap = await db.collection('users').get();
+        const filtered = usersSnap.docs
+            .filter(doc => {
+                const d = doc.data();
+                // Exclude all admins — only regular users in WCR
+                if (d.role === 'superAdmin' || d.role === 'deptAdmin' || d.role === 'teamLeader' || d.role === 'admin') return false;
+                return matchesViewScope(d) && d.name;
+            })
+            .sort((a,b) => (a.data().name||'').localeCompare(b.data().name||''));
+
+        const weeks = [];
+        for (let i=0;i<4;i++) {
+            const d=new Date(); d.setDate(d.getDate()-i*7);
+            weeks.push(getWeekInfo(d.toISOString().split('T')[0]));
+        }
+        weeks.reverse();
+
+        const pctStyle = (pct) => {
+            if (pct < 0)   return { bg:'#FFFDE7', color:'#b91c1c', bold:true, text:`(${pct}%)` };
+            if (pct < 20)  return { bg:'#FFFDE7', color:'#b91c1c', bold:true, text:`${pct}%` };
+            if (pct >= 70) return { bg:'', color:'#15803d', bold:true, text:`${pct}%` };
+            return { bg:'', color:'#1a252f', bold:false, text:`${pct}%` };
+        };
+
+        window._wcrUserList = [];
+
+        let tHtml = `<div style="overflow-x:auto;"><table class="comp-table" style="min-width:500px;">
+            <thead><tr>
+                <th class="comp-th comp-th-name">Name</th>
+                <th class="comp-th">Level</th>
+                <th class="comp-th">Team</th>
+                ${weeks.map(w=>`<th class="comp-th">${w.label.split('_')[0]}</th>`).join('')}
+            </tr></thead><tbody>`;
+
+        // Only fetch last 4 weeks of sadhana data for performance
+        const wcrFourWeeksAgo = localDateStr(28);
+        const allSnaps = await Promise.all(filtered.map(uDoc =>
+            uDoc.ref.collection('sadhana')
+                .where(firebase.firestore.FieldPath.documentId(), '>=', wcrFourWeeksAgo)
+                .get()
+        ));
+
+        filtered.forEach((uDoc, rowIdx) => {
+            const u = uDoc.data();
+            const sSnap = allSnaps[rowIdx];
+            // Use Map for O(1) date lookups instead of array.find()
+            const entsMap = new Map();
+            sSnap.docs.forEach(d => entsMap.set(d.id, { score: d.data().totalScore||0, sleepTime: d.data().sleepTime||'' }));
+            const stripeBg = rowIdx % 2 === 0 ? '#ffffff' : '#f8fafc';
+
+            const wcrIdx = window._wcrUserList.length;
+            window._wcrUserList.push({
+                uid: uDoc.id, name: u.name||'', level: u.level||'Level-1',
+                chanting: u.chantingCategory||'', rounds: u.exactRounds||'0',
+                role: u.role||'user', dept: u.department||'', team: u.team||''
+            });
+
+            const isSelf = uDoc.id === currentUser.uid;
+            const nameClick = ` onclick="openWCRUser(${wcrIdx})" style="cursor:pointer;${isSelf?'font-weight:800;color:#1A3C5E;':''}" title="View ${u.name||'user'}"`;
+            tHtml += `<tr style="background:${isSelf?'#eff6ff':stripeBg}">
+                <td class="comp-td comp-name"${nameClick}>${u.name}${isSelf?' ★':''}</td>
+                <td class="comp-td comp-meta">${u.level||'L1'}</td>
+                <td class="comp-td comp-meta">${u.team||'-'}</td>`;
+
+            weeks.forEach(w => {
+                let tot=0; const weekEnts=[]; const todayC = localDateStr(0);
+                let curr=new Date(w.sunStr);
+                for (let i=0;i<7;i++) {
+                    const ds=curr.toISOString().split('T')[0];
+                    if (ds < APP_START || ds > todayC) { curr.setDate(curr.getDate()+1); continue; }
+                    const en = entsMap.get(ds);
+                    if (en) { tot += en.score; weekEnts.push({id:ds,sleepTime:en.sleepTime||''}); }
+                    else if (ds < todayC) { tot += -30; }
+                    curr.setDate(curr.getDate()+1);
+                }
+                const fd = fairDenominator(w.sunStr, weekEnts, u.level||'Level-1');
+                const pct = fd > 0 ? Math.round((tot/fd)*100) : 0;
+                const ps = pctStyle(pct);
+                const pf = `<span style="display:inline-block;padding:1px 5px;border-radius:4px;font-size:9px;font-weight:700;margin-left:4px;background:${pct>=50?'#dcfce7':'#fee2e2'};color:${pct>=50?'#15803d':'#dc2626'};">${pct>=50?'P':'F'}</span>`;
+                tHtml += `<td class="comp-td comp-pct" style="background:${ps.bg||stripeBg};color:${ps.color};font-weight:${ps.bold?'700':'400'};" title="${tot}/${fd}">${ps.text}${pf}</td>`;
+            });
+            tHtml += '</tr>';
+        });
+        tHtml += '</tbody></table></div>';
+        container.innerHTML = tHtml;
+
+        // Build cache for performers
+        const perfCache = new Map();
+        filtered.forEach((uDoc, i) => {
+            const sSnap = allSnaps[i];
+            perfCache.set(uDoc.id, sSnap.docs.map(d => ({ date: d.id, score: d.data().totalScore||0 })));
+        });
+        computePerformers(filtered, perfCache);
+    } catch(err) {
+        console.error('User WCR error:', err);
+        container.innerHTML = '<p style="color:#dc2626;text-align:center;padding:20px;">Error loading data.</p>';
+        _userWCRLoaded = false;
+    }
+}
+
+// ═══════════════════════════════════════════════════════════
 // 7. REPORTS TABLE
 // ═══════════════════════════════════════════════════════════
 const APP_START = '2026-02-12';
 
 // Fair denominator: dailyMax × submitted/NR days in week (no future days)
-function fairDenominator(sunStr, weekData, level) {
+function fairDenominator(sunStr, weekData, level, joinedDate) {
     const dailyMax = getDailyMax(level || 'Level-1');
     const today = localDateStr(0);
     let days = 0;
@@ -875,6 +1096,7 @@ function fairDenominator(sunStr, weekData, level) {
         const d = new Date(sunStr); d.setDate(d.getDate() + i);
         const ds = d.toISOString().split('T')[0];
         if (ds < APP_START) continue;
+        if (joinedDate && ds < joinedDate) continue;
         if (ds > today) break;
         if (ds === today) {
             const submitted = weekData && weekData.find(e => e.id === ds && e.sleepTime !== 'NR');
@@ -1042,7 +1264,7 @@ function loadReports(userId, containerId) {
                             ? `<span class="edited-badge" onclick="showEditHistory(event,'${e.id}','${userId}')" title="View edit history">✏️</span>` : '';
                         const editBtn = isSuperAdmin()
                             ? `<button onclick="openEditModal('${userId}','${e.id}')" class="btn-edit-cell">${isNR ? '📝 Fill' : 'Edit'}</button>
-                               ${!isNR ? `<button onclick="toggleRejectEntry('${userId}','${e.id}',${isRejected})" class="btn-edit-cell" style="background:${isRejected?'#16a34a':'#dc2626'} !important;">${isRejected?'✅ Restore':'🚫 Reject'}</button>` : ''}` : '';
+                               ${!isNR ? `<button onclick="openRejectModal('${userId}','${e.id}',${isRejected})" class="btn-edit-cell" style="background:${isRejected?'#16a34a':'#dc2626'} !important;">${isRejected?'✅ Restore':'🚫 Reject'}</button>` : ''}` : '';
 
                         // Best of pathan/hearing
                         const patS  = sc.reading??0;
@@ -1075,7 +1297,7 @@ function loadReports(userId, containerId) {
                         const svcMins = e.serviceMinutes||0;
 
                         return `<tr style="background:${rowBg};">
-                            <td style="font-weight:600;">${e.id.split('-').slice(1).reverse().join('/')}${editedBadge}</td>
+                            <td style="font-weight:600;background:${rowBg};">${e.id.split('-').slice(1).reverse().join('/')}${editedBadge}</td>
                             <td style="${isNR?'color:#b91c1c;font-weight:700;':''}">${fmt12(e.sleepTime||'NR')}</td>${mkS(sc.sleep??0)}
                             <td style="${isNR?'color:#b91c1c;':''}">${fmt12(e.wakeupTime||'NR')}</td>${mkS(sc.wakeup??0)}
                             <td>${fmt12(e.chantingTime||'NR')}</td>${mkS(sc.chanting??0)}
@@ -1328,22 +1550,55 @@ document.getElementById('sadhana-form').onsubmit = async (e) => {
 
     const bonusTotal = Object.values(bonus).reduce((s,v)=>s+v,0);
 
-    await db.collection('users').doc(currentUser.uid).collection('sadhana').doc(date).set({
-        sleepTime: slp, wakeupTime: wak, chantingTime: chn,
-        readingMinutes: rMin, hearingMinutes: hMin,
-        serviceMinutes: sMin, serviceText: svcTxt,
-        notesMinutes: nMin, instrumentMinutes: instMin,
-        daySleepMinutes: dsMin,
-        scores: result.sc, totalScore: result.total,
-        bonus, bonusTotal,
-        dayPercent: result.dayPercent,
-        bestOf: result.bestIs,
-        levelAtSubmission: level, instrument,
-        submittedAt: firebase.firestore.FieldValue.serverTimestamp()
-    });
-    alert(`✅ Submitted!\nScore: ${result.total} + Bonus: ${bonusTotal} = ${result.total+bonusTotal} (${result.dayPercent}%)`);
-    switchTab('reports');
+    try {
+        await db.collection('users').doc(currentUser.uid).collection('sadhana').doc(date).set({
+            sleepTime: slp, wakeupTime: wak, chantingTime: chn,
+            readingMinutes: rMin, hearingMinutes: hMin,
+            serviceMinutes: sMin, serviceText: svcTxt,
+            notesMinutes: nMin, instrumentMinutes: instMin,
+            daySleepMinutes: dsMin,
+            scores: result.sc, totalScore: result.total,
+            bonus, bonusTotal,
+            dayPercent: result.dayPercent,
+            bestOf: result.bestIs,
+            levelAtSubmission: level, instrument,
+            submittedAt: firebase.firestore.FieldValue.serverTimestamp()
+        });
+        if (!userProfile.joinedDate) {
+            db.collection('users').doc(currentUser.uid).update({ joinedDate: date });
+        }
+        showSubmitSuccess(result.total, bonusTotal, result.dayPercent);
+    } catch(err) {
+        showToast('❌ Failed to submit: ' + err.message, 'error');
+    }
 };
+
+function showSubmitSuccess(score, bonus, pct) {
+    const overlay = document.getElementById('submit-success-overlay');
+    if (!overlay) { switchSadhanaTab('reports'); return; }
+    const dailyMax = getDailyMax(userProfile?.level || 'Level-1');
+    const total = score + (bonus || 0);
+    document.getElementById('ss-score').textContent = total;
+    document.getElementById('ss-max').textContent = 'out of ' + dailyMax + ' pts';
+    document.getElementById('ss-pct').textContent = pct + '%';
+    const msgs = [
+        'Jai Shri Krishna! Keep up the devotion 🙏',
+        'Wonderful! Every sadhana brings you closer ✨',
+        'Hare Krishna! Your efforts are counted 📿',
+        'Well done! Guru is pleased with your practice 🙌',
+        'Beautiful! Consistency is the key to progress 💪'
+    ];
+    document.getElementById('ss-msg').textContent = msgs[Math.floor(Math.random() * msgs.length)];
+    const bar = document.getElementById('ss-bar');
+    bar.style.width = '0';
+    overlay.classList.add('visible');
+    requestAnimationFrame(() => requestAnimationFrame(() => { bar.style.width = Math.min(Math.max(pct,0), 100) + '%'; }));
+    setTimeout(() => {
+        overlay.classList.remove('visible');
+        bar.style.width = '0';
+        switchSadhanaTab('reports');
+    }, 2800);
+}
 
 // ═══════════════════════════════════════════════════════════
 // 10. ADMIN PANEL
@@ -1477,7 +1732,7 @@ async function loadAdminPanel() {
         .filter(doc => {
             const d = doc.data();
             // Exclude all admins — only show regular users in reports/management
-            if (d.role === 'superAdmin' || d.role === 'deptAdmin' || d.role === 'teamLeader') return false;
+            if (d.role === 'superAdmin' || d.role === 'deptAdmin' || d.role === 'teamLeader' || d.role === 'admin') return false;
             return matchesScope(d);
         })
         .sort((a,b) => (a.data().name||'').localeCompare(b.data().name||''));
@@ -1512,9 +1767,6 @@ async function loadAdminPanel() {
         : `👥 <strong>Team Leader</strong> — Team: <strong>${userProfile.team||''}</strong>`;
     usersList.appendChild(banner);
 
-    // Category filter — only visible to super admin
-    const catFilter = document.getElementById('admin-category-filter');
-    if (catFilter) catFilter.style.display = isSuperAdmin() ? '' : 'none';
     const searchInput = document.getElementById('admin-search-input');
     if (searchInput) searchInput.value = '';
     if (catFilter) catFilter.value = '';
@@ -1527,13 +1779,19 @@ async function loadAdminPanel() {
     // Each entry: { id, name, level, lastDate, missedDays }
     const inactiveUsers = [];
     const userSadhanaCache = new Map();
+    window._adminCmpUserList = [];
 
-    // Fetch sadhana data in batches of 10 — parallel but safe from rate limits
+    // Fetch sadhana data in batches — only last 4 weeks for WCR performance
     const allSadhanaSnaps = [];
-    const BATCH = 10;
+    const BATCH = 25;
+    const fourWeeksAgo = localDateStr(28);
     for (let i = 0; i < filtered.length; i += BATCH) {
         const batch = filtered.slice(i, i + BATCH);
-        const snaps = await Promise.all(batch.map(uDoc => uDoc.ref.collection('sadhana').get()));
+        const snaps = await Promise.all(batch.map(uDoc =>
+            uDoc.ref.collection('sadhana')
+                .where(firebase.firestore.FieldPath.documentId(), '>=', fourWeeksAgo)
+                .get()
+        ));
         allSadhanaSnaps.push(...snaps);
     }
 
@@ -1541,8 +1799,10 @@ async function loadAdminPanel() {
         const uDoc  = filtered[idx];
         const u     = uDoc.data();
         const sSnap = allSadhanaSnaps[idx];
-        const ents  = sSnap.docs.map(d=>({date:d.id, score:d.data().totalScore||0, sleepTime:d.data().sleepTime||''}));
-        userSadhanaCache.set(uDoc.id, ents);
+        // Use Map for O(1) date lookups
+        const entsMap = new Map();
+        sSnap.docs.forEach(d => entsMap.set(d.id, { score: d.data().totalScore||0, sleepTime: d.data().sleepTime||'' }));
+        userSadhanaCache.set(uDoc.id, Array.from(entsMap.entries()).map(([date, v]) => ({ date, ...v })));
 
         const submittedDates = new Set(sSnap.docs.map(d => d.id).filter(d => d >= APP_START));
         let missedDays = 0;
@@ -1558,10 +1818,15 @@ async function loadAdminPanel() {
             inactiveUsers.push({ id: uDoc.id, name: u.name, level: u.level||'Level-1', dept: u.department||'', team: u.team||'', lastDate, missedDays });
         }
 
-        const rowIdx = filtered.indexOf(uDoc);
-        const stripeBg = rowIdx % 2 === 0 ? '#ffffff' : '#f8fafc';
+        const stripeBg = idx % 2 === 0 ? '#ffffff' : '#f8fafc';
+        const cmpIdx = window._adminCmpUserList.length;
+        window._adminCmpUserList.push({
+            uid: uDoc.id, name: u.name||'', level: u.level||'Level-1',
+            chanting: u.chantingCategory||'', rounds: u.exactRounds||'0',
+            role: u.role||'user', dept: u.department||'', team: u.team||''
+        });
         tHtml += `<tr style="background:${stripeBg}">
-            <td class="comp-td comp-name">${u.name}</td>
+            <td class="comp-td comp-name" onclick="openAdminCmpUser(${cmpIdx})" style="cursor:pointer;" title="View ${u.name}">${u.name}</td>
             <td class="comp-td comp-meta">${u.level||'L1'}</td>
             <td class="comp-td comp-meta">${u.department||'-'}</td>
             <td class="comp-td comp-meta">${u.team||'-'}</td>
@@ -1572,9 +1837,9 @@ async function loadAdminPanel() {
             const todayComp = localDateStr(0);
             for (let i=0;i<7;i++) {
                 const ds=curr.toISOString().split('T')[0];
-                if (ds < APP_START) { curr.setDate(curr.getDate()+1); continue; } // skip pre-app
-                if (ds > todayComp) { curr.setDate(curr.getDate()+1); continue; } // skip future
-                const en=ents.find(e=>e.date===ds);
+                if (ds < APP_START) { curr.setDate(curr.getDate()+1); continue; }
+                if (ds > todayComp) { curr.setDate(curr.getDate()+1); continue; }
+                const en = entsMap.get(ds);
                 if (en) {
                     tot += en.score;
                     weekEnts.push({id:ds, sleepTime:en.sleepTime||'', score:en.score});
@@ -1684,6 +1949,9 @@ async function loadAdminPanel() {
 
     tableBox.innerHTML = tHtml + '</tbody></table>';
 
+    // Build performers ring charts (admin WCR)
+    computePerformers(filtered, userSadhanaCache);
+
     // Apply filters if already set (handles first-time filter before data loaded)
     requestAnimationFrame(() => {
         filterReports();
@@ -1701,7 +1969,7 @@ async function loadAdminMgmt() {
     const snap = await db.collection('users').get();
     const admins = snap.docs
         .map(d => ({ id: d.id, ...d.data() }))
-        .filter(u => u.role === 'superAdmin' || u.role === 'deptAdmin' || u.role === 'teamLeader')
+        .filter(u => u.role === 'superAdmin' || u.role === 'deptAdmin' || u.role === 'teamLeader' || u.role === 'admin')
         .sort((a,b) => {
             const order = { superAdmin: 0, deptAdmin: 1, teamLeader: 2 };
             return (order[a.role]||3) - (order[b.role]||3) || (a.name||'').localeCompare(b.name||'');
@@ -2210,7 +2478,7 @@ window.toggleRejectEntry = async (userId, dateStr, isCurrentlyRejected) => {
         // REJECT
         const reason = prompt(`🚫 Reject entry for ${dateStr}?\n\nEnter reason (required):`);
         if (!reason?.trim()) { showToast('Rejection cancelled — reason required', 'warn'); return; }
-        if (!confirm(`Apply −30 penalty and reject this entry?\nReason: ${reason}`)) return;
+        if (!confirm(`Apply −50 penalty and reject this entry?\nReason: ${reason}`)) return;
         try {
             const docSnap = await db.collection('users').doc(userId).collection('sadhana').doc(dateStr).get();
             const d = docSnap.data();
@@ -2221,8 +2489,8 @@ window.toggleRejectEntry = async (userId, dateStr, isCurrentlyRejected) => {
                 rejectionReason: reason.trim(),
                 originalTotalScore: d.totalScore ?? 0,
                 originalDayPercent: d.dayPercent ?? 0,
-                totalScore: -30,
-                dayPercent: -19
+                totalScore: -50,
+                dayPercent: -31
             });
             showToast('🚫 Entry rejected!', 'success');
         } catch(err) { showToast('❌ ' + err.message, 'error'); }
@@ -2267,7 +2535,7 @@ function refreshFormFields() {
     // Sunday bonus — show only if today is Sunday
     const todayDay = new Date().getDay();
     const selectedDate = document.getElementById('sadhana-date')?.value;
-    const selDay = selectedDate ? new Date(selectedDate).getDay() : -1;
+    const selDay = selectedDate ? (() => { const [y,m,d] = selectedDate.split('-').map(Number); return new Date(y,m-1,d).getDay(); })() : -1;
     const isSunday = selDay === 0;
     const sundayArea = document.getElementById('sunday-bonus-area');
     if (sundayArea) sundayArea.classList.toggle('hidden', !isSunday);
@@ -2318,6 +2586,7 @@ document.getElementById('profile-form').onsubmit = async (e) => {
         instrument:       document.getElementById('profile-instrument').value || '',
         role:             userProfile?.role || 'user'
     };
+    if (window._profilePicDataUrl) data.photoURL = window._profilePicDataUrl;
     if (!data.name)       { alert('Please enter your name.'); return; }
     if (!data.department || !data.team) { alert('Please select Department and Team.'); return; }
     await db.collection('users').doc(currentUser.uid).set(data, { merge: true });
@@ -2420,6 +2689,18 @@ window.openProfileEdit = () => {
     const instrSel = document.getElementById('profile-instrument');
     if (instrSel) instrSel.value = userProfile.instrument || '';
 
+    // Populate profile picture preview
+    window._profilePicDataUrl = null;
+    const ppPreview = document.getElementById('profile-pic-preview');
+    const ppInit    = document.getElementById('profile-pic-init');
+    if (userProfile.photoURL) {
+        if (ppPreview) { ppPreview.src = userProfile.photoURL; ppPreview.style.display = ''; }
+        if (ppInit) ppInit.style.display = 'none';
+    } else {
+        if (ppPreview) ppPreview.style.display = 'none';
+        if (ppInit) { ppInit.textContent = (userProfile.name||'?')[0].toUpperCase(); ppInit.style.display = ''; }
+    }
+
     const cancelBtn = document.getElementById('cancel-edit');
     if (cancelBtn) cancelBtn.classList.remove('hidden');
     showSection('profile');
@@ -2457,6 +2738,42 @@ if ('serviceWorker' in navigator) {
             })
             .catch(err => console.log('SW registration failed:', err));
     });
+}
+
+// ── PWA Install Prompt ──
+let _deferredInstallPrompt = null;
+
+window.addEventListener('beforeinstallprompt', (e) => {
+    e.preventDefault();
+    _deferredInstallPrompt = e;
+    const banner = document.getElementById('install-banner');
+    if (banner && !localStorage.getItem('install-banner-dismissed')) {
+        banner.classList.remove('hidden');
+        banner.style.display = 'flex';
+    }
+});
+
+window.installApp = async () => {
+    if (!_deferredInstallPrompt) return;
+    _deferredInstallPrompt.prompt();
+    const { outcome } = await _deferredInstallPrompt.userChoice;
+    if (outcome === 'accepted') {
+        const banner = document.getElementById('install-banner');
+        if (banner) { banner.classList.add('hidden'); banner.style.display = 'none'; }
+    }
+    _deferredInstallPrompt = null;
+};
+
+window.dismissInstallBanner = () => {
+    const banner = document.getElementById('install-banner');
+    if (banner) { banner.classList.add('hidden'); banner.style.display = 'none'; }
+    localStorage.setItem('install-banner-dismissed', '1');
+};
+
+// Auto-hide if already installed (standalone mode)
+if (window.matchMedia('(display-mode: standalone)').matches || window.navigator.standalone) {
+    const banner = document.getElementById('install-banner');
+    if (banner) { banner.classList.add('hidden'); banner.style.display = 'none'; }
 }
 
 // ═══════════════════════════════════════════════════════════
@@ -2632,7 +2949,7 @@ window._sendRoleNotification = async (userId, userName, newRole, category) => {
 window._initNotifications = () => {
     loadUserNotifications();
     checkSadhanaReminder();
-    if (adminBtn && isAnyAdmin()) adminBtn.classList.remove('hidden');
+    // (adminBtn removed — bottom nav handles admin visibility)
 };
 
 // USER SIDEBAR
@@ -2677,4 +2994,1552 @@ window.openNotificationsPanel = async () => {
         const badge = document.getElementById('sidebar-notif-badge');
         if (badge) badge.classList.add('hidden');
     } catch(e) { console.warn(e); }
+};
+
+// ═══════════════════════════════════════════════════════════
+// PROFILE PICTURE
+// ═══════════════════════════════════════════════════════════
+window._profilePicDataUrl = null;
+
+window.handleProfilePicSelect = (input) => {
+    const file = input.files[0];
+    if (!file) return;
+    const reader = new FileReader();
+    reader.onload = (ev) => {
+        const img = new Image();
+        img.onload = () => {
+            const canvas = document.createElement('canvas');
+            const MAX = 200;
+            let w = img.width, h = img.height;
+            if (w > h) { h = Math.round(h * MAX / w); w = MAX; }
+            else       { w = Math.round(w * MAX / h); h = MAX; }
+            canvas.width = w; canvas.height = h;
+            canvas.getContext('2d').drawImage(img, 0, 0, w, h);
+            const dataUrl = canvas.toDataURL('image/jpeg', 0.82);
+            window._profilePicDataUrl = dataUrl;
+            const preview = document.getElementById('profile-pic-preview');
+            const init    = document.getElementById('profile-pic-init');
+            if (preview) { preview.src = dataUrl; preview.style.display = ''; }
+            if (init) init.style.display = 'none';
+        };
+        img.src = ev.target.result;
+    };
+    reader.readAsDataURL(file);
+};
+
+function updateAvatarDisplay(photoURL, name) {
+    const initial = (name || '?').split(' ').map(n=>n[0]).join('').substring(0,2).toUpperCase();
+    const pairs = [
+        ['header-av-img', 'header-av-init'],
+        ['sidebar-av-img', 'sidebar-av-init'],
+    ];
+    pairs.forEach(([imgId, initId]) => {
+        const img  = document.getElementById(imgId);
+        const init = document.getElementById(initId);
+        if (!img || !init) return;
+        if (photoURL) {
+            img.src = photoURL; img.style.display = '';
+            init.style.display = 'none';
+        } else {
+            img.style.display  = 'none';
+            init.textContent   = initial;
+            init.style.display = '';
+        }
+    });
+}
+
+function avatarHtml(photoURL, name, size) {
+    const sz = size || 32;
+    const initial = (name || '?').split(' ').map(n=>n[0]).join('').substring(0,2).toUpperCase();
+    if (photoURL) {
+        return `<div class="av" style="width:${sz}px;height:${sz}px;"><img src="${photoURL}"></div>`;
+    }
+    return `<div class="av" style="width:${sz}px;height:${sz}px;"><span class="av-init" style="font-size:${Math.round(sz*0.38)}px;">${initial}</span></div>`;
+}
+
+// ═══════════════════════════════════════════════════════════
+// USER ACTION BOTTOM SHEET (UAC)
+// ═══════════════════════════════════════════════════════════
+let _uacUID = null, _uacName = null;
+
+window.openUAC = (uid, name, level, chanting, rounds, role, dept, team) => {
+    _uacUID  = uid;
+    _uacName = name;
+    document.getElementById('uac-name').textContent = name;
+    document.getElementById('uac-sub').textContent  = `${level||''} · ${dept||''} · ${team||''} · ${chanting||''} · ${rounds||'?'} rounds`;
+
+    // Role change: admin-only
+    const roleWrap = document.getElementById('uac-role-wrap');
+    if (isSuperAdmin() || (isDeptAdmin() && dept === userProfile.department)) {
+        let opts = '<option value="" disabled selected>Change Role…</option>';
+        if (isSuperAdmin()) {
+            if (role !== 'superAdmin') opts += '<option value="superAdmin">👑 Make Super Admin</option>';
+            ['IGF','IYF','ICF_MTG','ICF_PRJI'].forEach(d => {
+                opts += `<option value="deptAdmin:${d}">🛡️ Dept Admin — ${d}</option>`;
+                if (DEPT_TEAMS[d]) DEPT_TEAMS[d].filter(t=>t!=='Other').forEach(t =>
+                    opts += `<option value="teamLeader:${d}:${t}">👥 TL — ${t} (${d})</option>`
+                );
+            });
+            if (role !== 'user') opts += '<option value="demote">🚫 Revoke to User</option>';
+        } else if (isDeptAdmin()) {
+            if (DEPT_TEAMS[userProfile.department]) DEPT_TEAMS[userProfile.department].filter(t=>t!=='Other').forEach(t =>
+                opts += `<option value="teamLeader:${userProfile.department}:${t}">👥 TL — ${t}</option>`
+            );
+            if (role !== 'user') opts += '<option value="demote">🚫 Revoke to User</option>';
+        }
+        document.getElementById('uac-role-sel').innerHTML = opts;
+        roleWrap.style.display = '';
+    } else {
+        roleWrap.style.display = 'none';
+    }
+
+    // Remove button: superAdmin only
+    const removeBtn = document.getElementById('uac-remove-btn');
+    if (removeBtn) removeBtn.style.display = isSuperAdmin() ? '' : 'none';
+
+    // Activity Analysis: admins only
+    const actWrap = document.getElementById('uac-activity-wrap');
+    if (actWrap) actWrap.style.display = isAnyAdmin() ? '' : 'none';
+
+    document.getElementById('uac-sheet').classList.add('open');
+    document.getElementById('uac-overlay').classList.remove('hidden');
+    document.body.style.overflow = 'hidden';
+};
+
+window.closeUAC = () => {
+    document.getElementById('uac-sheet').classList.remove('open');
+    document.getElementById('uac-overlay').classList.add('hidden');
+    document.body.style.overflow = '';
+};
+
+window.uacHistory  = () => { closeUAC(); openUserModal(_uacUID, _uacName); };
+window.uacExcel    = () => { closeUAC(); downloadUserExcel(_uacUID, _uacName); };
+window.uacProgress = () => { closeUAC(); openProgressModal(_uacUID, _uacName); };
+
+window.openWCRUser = (idx) => {
+    const u = (window._wcrUserList || [])[idx];
+    if (!u) return;
+    openUAC(u.uid, u.name, u.level, u.chanting, u.rounds, u.role, u.dept, u.team);
+};
+
+window.openAdminCmpUser = (idx) => {
+    const u = (window._adminCmpUserList || [])[idx];
+    if (!u) return;
+    openUAC(u.uid, u.name, u.level, u.chanting, u.rounds, u.role, u.dept, u.team);
+};
+
+window.uacRoleChange = async (sel) => {
+    const val = sel.value; if (!val) return;
+    const parts = val.split(':');
+    try {
+        if (val === 'superAdmin') {
+            if (!confirm(`Make ${_uacName} a Super Admin?`)) { sel.value=''; return; }
+            await db.collection('users').doc(_uacUID).update({ role: 'superAdmin' });
+        } else if (val === 'demote') {
+            if (!confirm(`Revoke admin role for ${_uacName}?`)) { sel.value=''; return; }
+            await db.collection('users').doc(_uacUID).update({ role: 'user' });
+        } else if (parts[0] === 'deptAdmin') {
+            if (!confirm(`Make ${_uacName} Dept Admin of ${parts[1]}?`)) { sel.value=''; return; }
+            await db.collection('users').doc(_uacUID).update({ role: 'deptAdmin', department: parts[1] });
+        } else if (parts[0] === 'teamLeader') {
+            if (!confirm(`Make ${_uacName} Team Leader of ${parts[2]} (${parts[1]})?`)) { sel.value=''; return; }
+            await db.collection('users').doc(_uacUID).update({ role: 'teamLeader', department: parts[1], team: parts[2] });
+        }
+        showToast('✅ Role updated!', 'success');
+        sel.value = '';
+        closeUAC();
+        adminPanelLoaded = false;
+        _userWCRLoaded = false;
+    } catch(e) {
+        alert('Error: ' + e.message);
+    }
+};
+
+window.uacRemove = async () => {
+    if (!isSuperAdmin()) return;
+    const typed = prompt(`Type "${_uacName}" to confirm deletion:`);
+    if (typed !== _uacName) { alert('Name did not match. Cancelled.'); return; }
+    try {
+        await db.collection('users').doc(_uacUID).delete();
+        showToast('✅ User removed.', 'success');
+        closeUAC();
+        adminPanelLoaded = false;
+        _userWCRLoaded = false;
+    } catch(e) { alert('Error: ' + e.message); }
+};
+
+// ═══════════════════════════════════════════════════════════
+// ACTIVITY ANALYSIS
+// ═══════════════════════════════════════════════════════════
+let _aaUID = null, _aaName = null, _aaTab = 'current-week';
+let _aaChartDonut = null, _aaChartBar = null;
+
+window.uacActivity = () => {
+    const uid = _uacUID, name = _uacName;
+    closeUAC();
+    openActivityAnalysis(uid, name);
+};
+
+window.openActivityAnalysis = (uid, name) => {
+    _aaUID = uid; _aaName = name; _aaTab = 'current-week';
+    document.getElementById('aa-user-name').textContent = name;
+    document.getElementById('aa-modal').classList.remove('hidden');
+    document.body.style.overflow = 'hidden';
+    document.querySelectorAll('.aa-tab-btn').forEach((b, i) => b.classList.toggle('active', i === 0));
+    renderActivityAnalysis(uid, 'current-week');
+};
+
+window.closeActivityModal = () => {
+    document.getElementById('aa-modal').classList.add('hidden');
+    document.body.style.overflow = '';
+    if (_aaChartDonut) { try { _aaChartDonut.destroy(); } catch(e){} _aaChartDonut = null; }
+    if (_aaChartBar)   { try { _aaChartBar.destroy();   } catch(e){} _aaChartBar   = null; }
+};
+
+window.setAATab = (tab, btn) => {
+    _aaTab = tab;
+    document.querySelectorAll('.aa-tab-btn').forEach(b => b.classList.remove('active'));
+    if (btn) btn.classList.add('active');
+    renderActivityAnalysis(_aaUID, tab);
+};
+
+function getActivityConfig(level) {
+    const isL4  = level === 'Level-4';
+    const isL3  = level === 'Level-3';
+    const isL12 = level === 'Level-1' || level === 'Level-2';
+
+    const actKeys = ['sleep','wakeup','chanting','reading','hearing'];
+    if (isL3 || isL4) actKeys.push('instrument');
+    if (isL4) actKeys.push('notes');
+    actKeys.push('daySleep');
+
+    const actLabels = {
+        sleep:'Sleep', wakeup:'Wake-up', chanting:'Chanting',
+        reading:'Reading', hearing:'Hearing', instrument:'Instrument',
+        notes:'Notes', daySleep:'Day Sleep'
+    };
+
+    const actMax = {
+        sleep:25, wakeup:25, chanting:25, daySleep:10,
+        reading:  isL12 ? 20 : 25,
+        hearing:  isL12 ? 20 : 25,
+        instrument: (isL3 || isL4) ? 5 : 0,
+        notes: isL4 ? 20 : 0
+    };
+
+    return { actKeys, actLabels, actMax, dailyMax: getDailyMax(level) };
+}
+
+async function renderActivityAnalysis(uid, period) {
+    const statusEl  = document.getElementById('aa-status');
+    const donutWrap = document.getElementById('aa-donut-wrap');
+    const barWrap   = document.getElementById('aa-bar-wrap');
+    statusEl.textContent = 'Loading…';
+    if (donutWrap) donutWrap.style.opacity = '0.3';
+    if (barWrap)   barWrap.style.opacity   = '0.3';
+
+    if (_aaChartDonut) { try { _aaChartDonut.destroy(); } catch(e){} _aaChartDonut = null; }
+    if (_aaChartBar)   { try { _aaChartBar.destroy();   } catch(e){} _aaChartBar   = null; }
+
+    try {
+        const weekOffset = period === 'prev-week' ? 1 : 0;
+        const { dates, weekStart, weekEnd } = getWeekDates(weekOffset);
+        const startStr = dates[0], endStr = dates[dates.length - 1];
+
+        const [saSnap, userSnap] = await Promise.all([
+            db.collection('users').doc(uid).collection('sadhana')
+                .where(firebase.firestore.FieldPath.documentId(), '>=', startStr)
+                .where(firebase.firestore.FieldPath.documentId(), '<=', endStr)
+                .get(),
+            db.collection('users').doc(uid).get()
+        ]);
+
+        const level = userSnap.data()?.level || 'Level-1';
+        const { actKeys, actLabels, actMax, dailyMax } = getActivityConfig(level);
+
+        const validDocs = saSnap.docs.filter(d => {
+            const data = d.data();
+            return data.sleepTime && data.sleepTime !== 'NR';
+        });
+
+        if (validDocs.length === 0) {
+            statusEl.textContent = 'No entries found for this period.';
+            if (donutWrap) donutWrap.style.opacity = '1';
+            if (barWrap)   barWrap.style.opacity   = '1';
+            return;
+        }
+        statusEl.textContent = '';
+
+        const totals = {};
+        actKeys.forEach(k => totals[k] = 0);
+        validDocs.forEach(d => {
+            const scores = d.data().scores || {};
+            actKeys.forEach(k => { totals[k] += (scores[k] ?? 0); });
+        });
+
+        const n = validDocs.length;
+        const totalScore = validDocs.reduce((sum, d) => sum + (d.data().totalScore ?? 0), 0);
+        const weekPct = Math.round(totalScore * 100 / (n * dailyMax));
+        const weekScores = {};
+        actKeys.forEach(k => { weekScores[k] = Math.round(totals[k] * 10) / 10; });
+
+        const fmtD = d => d.toLocaleDateString('en-IN', { day:'numeric', month:'short' });
+        document.getElementById('aa-period-label').textContent =
+            `${fmtD(weekStart)} – ${fmtD(weekEnd)} · ${n} day${n>1?'s':''} · ${totalScore} pts`;
+
+        if (donutWrap) donutWrap.style.opacity = '1';
+        if (barWrap)   barWrap.style.opacity   = '1';
+
+        // Donut chart
+        const donutColor = weekPct >= 70 ? '#16a34a' : weekPct >= 50 ? '#d97706' : '#dc2626';
+        const donutCanvas = document.getElementById('aa-donut-canvas');
+        _aaChartDonut = new Chart(donutCanvas.getContext('2d'), {
+            type: 'doughnut',
+            data: { datasets: [{ data: [weekPct, Math.max(0, 100 - weekPct)], backgroundColor: [donutColor, '#e5e7eb'], borderWidth: 0 }] },
+            options: { cutout: '74%', responsive: true, maintainAspectRatio: true, plugins: { legend: { display: false }, tooltip: { enabled: false } }, animation: { duration: 500 } },
+            plugins: [{
+                id: 'centerText',
+                afterDraw(chart) {
+                    const { ctx, chartArea: { left, top, width, height } } = chart;
+                    const cx = left + width / 2, cy = top + height / 2;
+                    ctx.save(); ctx.textAlign = 'center'; ctx.textBaseline = 'middle';
+                    ctx.font = `bold ${Math.round(width * 0.2)}px Segoe UI`;
+                    ctx.fillStyle = donutColor;
+                    ctx.fillText(weekPct + '%', cx, cy - 7);
+                    ctx.font = `${Math.round(width * 0.1)}px Segoe UI`;
+                    ctx.fillStyle = '#6b7280';
+                    ctx.fillText('week score', cx, cy + 12);
+                    ctx.restore();
+                }
+            }]
+        });
+
+        // Horizontal bar chart
+        const barColors = actKeys.map(k => {
+            const maxK = actMax[k] * n;
+            const pct = maxK > 0 ? (weekScores[k] / maxK) * 100 : 0;
+            return pct >= 75 ? '#16a34a' : pct >= 50 ? '#f59e0b' : '#ef4444';
+        });
+
+        const barCanvas = document.getElementById('aa-bar-canvas');
+        _aaChartBar = new Chart(barCanvas.getContext('2d'), {
+            type: 'bar',
+            data: {
+                labels: actKeys.map(k => actLabels[k]),
+                datasets: [{ data: actKeys.map(k => weekScores[k]), backgroundColor: barColors, borderRadius: 4, barThickness: 14 }]
+            },
+            options: {
+                indexAxis: 'y', responsive: true, maintainAspectRatio: false,
+                plugins: {
+                    legend: { display: false },
+                    tooltip: {
+                        callbacks: {
+                            label: ctx => {
+                                const k = actKeys[ctx.dataIndex];
+                                const maxK = actMax[k] * n;
+                                const pctStr = maxK > 0 ? ` (${Math.round(weekScores[k]*100/maxK)}%)` : '';
+                                return ` ${weekScores[k]} / ${maxK} pts${pctStr}`;
+                            }
+                        }
+                    }
+                },
+                scales: {
+                    x: { min: Math.floor(-5 * n), max: Math.ceil(25 * n), grid: { color: '#f3f4f6' }, ticks: { font: { size: 10 } } },
+                    y: { ticks: { font: { size: 11 } } }
+                }
+            }
+        });
+
+    } catch (e) {
+        statusEl.textContent = 'Error loading data.';
+        console.error('Activity Analysis error:', e);
+    }
+}
+
+// ═══════════════════════════════════════════════════════════
+// BOTTOM NAVIGATION
+// ═══════════════════════════════════════════════════════════
+function initBottomNav() {
+    const userNav  = document.getElementById('user-bottom-nav');
+    const adminNav = document.getElementById('admin-bottom-nav');
+    if (isAnyAdmin()) {
+        if (adminNav) adminNav.classList.add('visible');
+        if (userNav)  userNav.classList.remove('visible');
+    } else {
+        if (userNav)  userNav.classList.add('visible');
+        if (adminNav) adminNav.classList.remove('visible');
+    }
+    document.body.classList.add('has-bottom-nav');
+}
+
+window.bnavSwitch = (tab, btn) => {
+    document.querySelectorAll('#user-bottom-nav .bnav-item').forEach(b => b.classList.remove('active'));
+    if (btn) btn.classList.add('active');
+    switchTab(tab);
+};
+
+window.bnavAdminSwitch = (tab, btn) => {
+    document.querySelectorAll('#admin-bottom-nav .bnav-item').forEach(b => b.classList.remove('active'));
+    if (btn) btn.classList.add('active');
+    switchTab(tab);
+};
+
+// ═══════════════════════════════════════════════════════════
+// HOME PANEL
+// ═══════════════════════════════════════════════════════════
+function drawRing(canvas, pct, color) {
+    const ctx = canvas.getContext('2d');
+    const w = canvas.width, h = canvas.height, cx = w/2, cy = h/2, r = Math.min(w,h)/2 - 8;
+    ctx.clearRect(0,0,w,h);
+    ctx.beginPath(); ctx.arc(cx,cy,r,0,Math.PI*2); ctx.strokeStyle='#e2e8f0'; ctx.lineWidth=10; ctx.stroke();
+    if (pct > 0) {
+        ctx.beginPath(); ctx.arc(cx,cy,r,-Math.PI/2,-Math.PI/2+(Math.min(pct,100)/100)*Math.PI*2);
+        ctx.strokeStyle=color; ctx.lineWidth=10; ctx.lineCap='round'; ctx.stroke();
+    }
+}
+
+function animateRing(canvas, targetPct, color) {
+    const start = performance.now();
+    const duration = 900;
+    function frame(now) {
+        const p = Math.min((now - start) / duration, 1);
+        const eased = 1 - Math.pow(1 - p, 3);
+        drawRing(canvas, targetPct * eased, color);
+        if (p < 1) requestAnimationFrame(frame);
+    }
+    requestAnimationFrame(frame);
+}
+
+async function loadHomePanel(weekOffset) {
+    const level = userProfile?.level || 'Level-1';
+    const dailyMax = getDailyMax(level);
+    const { actKeys, actLabels, actMax } = getActivityConfig(level);
+    const { dates, weekStart, weekEnd } = getWeekDates(weekOffset);
+    const todayStr = localDateStr(0);
+
+    // Fetch sadhana entries for this week
+    const startStr = dates[0], endStr = dates[dates.length-1];
+    let saSnap;
+    try {
+        saSnap = await db.collection('users').doc(currentUser.uid).collection('sadhana')
+            .where(firebase.firestore.FieldPath.documentId(), '>=', startStr)
+            .where(firebase.firestore.FieldPath.documentId(), '<=', endStr).get();
+    } catch(e) { console.warn('Home panel error:', e); return; }
+
+    const filledSet = new Set();
+    const entryMap = new Map();
+    saSnap.docs.forEach(d => {
+        const data = d.data();
+        if (data.sleepTime && data.sleepTime !== 'NR') {
+            filledSet.add(d.id);
+            entryMap.set(d.id, data);
+        }
+    });
+
+    // Count ALL eligible days — apply NR penalty for missed ones
+    const joinedDate = userProfile?.joinedDate || APP_START;
+    let totalScore = 0, totalDays = 0, filledDays = 0;
+    const actTotals = {};
+    actKeys.forEach(k => actTotals[k] = 0);
+
+    dates.forEach(ds => {
+        if (ds < APP_START || ds < joinedDate || ds > todayStr) return;
+        if (ds === todayStr && !filledSet.has(ds)) return; // today not filled yet — skip, don't penalize
+        totalDays++;
+        if (filledSet.has(ds)) {
+            const data = entryMap.get(ds);
+            totalScore += data.totalScore || 0;
+            filledDays++;
+            const sc = data.scores || {};
+            actKeys.forEach(k => { actTotals[k] += (sc[k] ?? 0); });
+        } else {
+            totalScore += -30; // NR penalty
+        }
+    });
+
+    const weekPct = totalDays > 0 ? Math.round(totalScore * 100 / (totalDays * dailyMax)) : 0;
+
+    // Ring chart with animation
+    const ringColor = weekPct >= 70 ? '#16a34a' : weekPct >= 50 ? '#d97706' : '#dc2626';
+    const canvas = document.getElementById('home-ring-canvas');
+    if (canvas) animateRing(canvas, weekPct, ringColor);
+    const pctEl = document.getElementById('home-ring-pct');
+    if (pctEl) pctEl.innerHTML = `<span style="font-size:24px;font-weight:800;color:${ringColor};">${weekPct}%</span><span style="font-size:10px;color:#6b7280;">week score</span>`;
+
+    // Stats
+    const ptsEl = document.getElementById('home-week-pts');
+    const daysEl = document.getElementById('home-days-count');
+    if (ptsEl) ptsEl.textContent = totalScore;
+    if (daysEl) daysEl.textContent = filledDays + '/' + totalDays;
+
+    // Streak
+    let streak = 0;
+    const checkDates = [...dates].reverse();
+    for (const ds of checkDates) {
+        if (ds > todayStr) continue;
+        if (filledSet.has(ds)) streak++; else break;
+    }
+    const streakEl = document.getElementById('home-streak-count');
+    if (streakEl) streakEl.textContent = streak;
+
+    // Streak dots with staggered animation
+    const dotsEl = document.getElementById('home-streak-dots');
+    if (dotsEl) {
+        const dayNames = ['Sun','Mon','Tue','Wed','Thu','Fri','Sat'];
+        dotsEl.innerHTML = dates.map((ds, i) => {
+            const [_dy,_dm,_dd] = ds.split('-').map(Number); const dow = new Date(_dy,_dm-1,_dd).getDay();
+            const cls = filledSet.has(ds) ? 'filled' : (ds < todayStr ? 'missed' : (ds === todayStr ? 'today' : ''));
+            return `<div class="streak-day-wrap" style="animation-delay:${i*50}ms;">
+                <div class="streak-dot ${cls}"></div>
+                <span class="streak-dot-label">${dayNames[dow]}</span>
+            </div>`;
+        }).join('');
+    }
+
+    // Fill alert
+    const alertEl = document.getElementById('home-fill-alert');
+    if (alertEl) {
+        if (weekOffset === 0 && !filledSet.has(todayStr)) alertEl.classList.remove('hidden');
+        else alertEl.classList.add('hidden');
+    }
+
+    // Activity bars
+    const barsEl = document.getElementById('home-activity-bars');
+    if (barsEl && filledDays > 0) {
+        barsEl.innerHTML = actKeys.filter(k => actMax[k] > 0).map(k => {
+            const maxK = actMax[k] * filledDays;
+            const pct = maxK > 0 ? Math.round(actTotals[k] * 100 / maxK) : 0;
+            const color = pct >= 75 ? '#16a34a' : pct >= 50 ? '#f59e0b' : '#ef4444';
+            return `<div style="display:flex;align-items:center;gap:8px;margin-bottom:6px;">
+                <span style="font-size:11px;width:60px;color:#6b7280;text-align:right;">${actLabels[k]}</span>
+                <div class="home-act-bar"><div class="home-act-fill" style="width:${pct}%;background:${color};"></div></div>
+                <span style="font-size:11px;font-weight:600;color:${color};width:32px;">${pct}%</span>
+            </div>`;
+        }).join('');
+    } else if (barsEl) {
+        barsEl.innerHTML = '<p style="color:#aaa;text-align:center;font-size:12px;">No data for this period</p>';
+    }
+}
+
+// ═══════════════════════════════════════════════════════════
+// LEADERBOARD
+// ═══════════════════════════════════════════════════════════
+let _lbLoading = false, _lbMode = 'weekly';
+
+window.setLBMode = (mode, btn) => {
+    _lbMode = mode;
+    document.querySelectorAll('#lb-mode-tabs .chart-tab-btn').forEach(b => b.classList.remove('active'));
+    if (btn) btn.classList.add('active');
+    loadLeaderboard(true);
+};
+
+async function loadLeaderboard(force) {
+    if (_lbLoading && !force) return;
+    _lbLoading = true;
+    const container = document.getElementById('leaderboard-container');
+    const podiumEl  = document.getElementById('lb-podium');
+    if (!container) { _lbLoading = false; return; }
+    container.innerHTML = '<p style="color:#aaa;text-align:center;padding:20px;">Loading…</p>';
+
+    try {
+        const usersSnap = await db.collection('users').get();
+        const filtered = usersSnap.docs.filter(doc => {
+            const d = doc.data();
+            // Exclude all admins — only regular users in leaderboard
+            if (d.role === 'superAdmin' || d.role === 'deptAdmin' || d.role === 'teamLeader' || d.role === 'admin') return false;
+            return matchesViewScope(d) && d.name;
+        });
+
+        const rows = [];
+        const MEDALS = ['🥇','🥈','🥉'];
+
+        if (_lbMode === 'daily') {
+            const targetDate = localDateStr(1);
+            const daySnaps = await Promise.all(filtered.map(uDoc => uDoc.ref.collection('sadhana').doc(targetDate).get()));
+            filtered.forEach((uDoc, i) => {
+                const u = uDoc.data(), snap = daySnaps[i];
+                const joinedDate = u.joinedDate || APP_START;
+                if (targetDate < joinedDate) return; // not yet joined
+                const dailyMax = getDailyMax(u.level || 'Level-1');
+                if (snap.exists && snap.data().sleepTime && snap.data().sleepTime !== 'NR') {
+                    const d = snap.data();
+                    rows.push({ uid: uDoc.id, name: u.name||'—', photo: u.photoURL||null, level: u.level||'L1', score: d.totalScore??0, pct: Math.round((d.totalScore??0)*100/dailyMax), rejected: !!d.rejected });
+                } else {
+                    // NR — penalize
+                    rows.push({ uid: uDoc.id, name: u.name||'—', photo: u.photoURL||null, level: u.level||'L1', score: -30, pct: Math.round(-30*100/dailyMax), rejected: false, isNR: true });
+                }
+            });
+        } else {
+            const weekOffset = _lbMode === 'lastweek' ? 1 : 0;
+            const { dates } = getWeekDates(weekOffset);
+            const startStr = dates[0], endStr = dates[dates.length-1];
+            const weekSnaps = await Promise.all(filtered.map(uDoc =>
+                uDoc.ref.collection('sadhana')
+                    .where(firebase.firestore.FieldPath.documentId(), '>=', startStr)
+                    .where(firebase.firestore.FieldPath.documentId(), '<=', endStr).get()
+            ));
+            const todayStr = localDateStr(0);
+            filtered.forEach((uDoc, i) => {
+                const u = uDoc.data();
+                const dailyMax = getDailyMax(u.level || 'Level-1');
+                const joinedDate = u.joinedDate || APP_START;
+                const entryMap = new Map();
+                weekSnaps[i].docs.forEach(d => entryMap.set(d.id, d.data()));
+
+                // Count all eligible days and apply NR penalty for missed ones
+                let totalScore = 0, totalDays = 0, filledDays = 0;
+                dates.forEach(ds => {
+                    if (ds < APP_START || ds < joinedDate) return;
+                    if (ds > todayStr) return;
+                    if (ds === todayStr) {
+                        const entry = entryMap.get(ds);
+                        if (!entry || !entry.sleepTime || entry.sleepTime === 'NR') return; // today not filled yet — skip, don't penalize
+                    }
+                    totalDays++;
+                    const entry = entryMap.get(ds);
+                    if (entry && entry.sleepTime && entry.sleepTime !== 'NR') {
+                        totalScore += entry.totalScore ?? 0;
+                        filledDays++;
+                    } else {
+                        totalScore += -30; // NR penalty
+                    }
+                });
+                if (totalDays === 0) return;
+                const pct = Math.round(totalScore * 100 / (totalDays * dailyMax));
+                rows.push({
+                    uid: uDoc.id, name: u.name||'—', photo: u.photoURL||null,
+                    level: u.level||'L1', score: totalScore, pct,
+                    days: filledDays + '/' + totalDays, rejected: false
+                });
+            });
+        }
+
+        rows.sort((a,b) => b.score - a.score);
+
+        // Podium with dramatic stagger (3rd → 2nd → 1st)
+        if (podiumEl && rows.length >= 2) {
+            const top = rows.slice(0, Math.min(3, rows.length));
+            // Visual order: 2nd | 1st (center) | 3rd
+            const order = top.length === 2 ? [top[1], top[0]] : [top[1], top[0], top[2]];
+            const delays = top.length === 2 ? [0.4, 1.2] : [1.0, 1.6, 0.4];
+            const sizes = [58, 76, 48]; // rank2, rank1, rank3
+            const borders = ['#94a3b8', '#fbbf24', '#cd7f32']; // silver, gold, bronze
+            podiumEl.innerHTML = order.map((r, i) => {
+                const rank = top.indexOf(r);
+                const medal = MEDALS[rank];
+                const sz = sizes[i] || 44;
+                const borderColor = borders[i] || '#e5e7eb';
+                const confetti = rank === 0 ? `<span style="position:absolute;top:-8px;font-size:20px;animation:confettiBurst 1.2s ease ${delays[i]+0.4}s both;">🎉</span>` : '';
+                return `<div style="display:flex;flex-direction:column;align-items:center;gap:4px;min-width:70px;position:relative;animation:podiumRise 0.6s cubic-bezier(0.34,1.56,0.64,1) ${delays[i]}s both;">
+                    ${confetti}
+                    <div class="av" style="width:${sz}px;height:${sz}px;border:3px solid ${borderColor};">${r.photo ? `<img src="${r.photo}">` : `<span class="av-init" style="font-size:${Math.round(sz*0.38)}px;">${(r.name||'?').split(' ').map(n=>n[0]).join('').substring(0,2).toUpperCase()}</span>`}</div>
+                    <span style="font-size:20px;">${medal}</span>
+                    <span style="font-size:11px;font-weight:700;color:#1A3C5E;text-align:center;max-width:80px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;">${r.name}</span>
+                    <span style="font-size:12px;font-weight:800;color:${r.pct>=70?'#16a34a':'#d97706'};">${r.score} pts</span>
+                </div>`;
+            }).join('');
+        } else if (podiumEl) { podiumEl.innerHTML = ''; }
+
+        // List
+        container.innerHTML = rows.length === 0
+            ? '<p style="color:#aaa;text-align:center;padding:20px;">No entries for this period.</p>'
+            : rows.map((r, i) => {
+                const isSelf = r.uid === currentUser.uid;
+                const medal = i < 3 ? MEDALS[i] : `<span style="font-size:13px;font-weight:700;color:#9ca3af;">#${i+1}</span>`;
+                const scoreColor = r.pct >= 70 ? '#15803d' : r.pct >= 50 ? '#d97706' : '#dc2626';
+                const subLine = r.isNR ? 'NR' : r.rejected ? 'Rejected' : (r.days ? `${r.pct}% · ${r.days}d` : `${r.pct}%`);
+                return `<div class="lb-row${isSelf?' lb-self':''}" data-level="${r.level}" onclick="openWCRUser(${i})" style="cursor:pointer;animation-delay:${Math.min(i*0.03,0.18)}s;${r.isNR?'opacity:0.6;':''}">
+                    <div class="lb-rank">${medal}</div>
+                    ${avatarHtml(r.photo, r.name, 34)}
+                    <div class="lb-name">${r.name}<span style="font-size:10px;color:#9ca3af;margin-left:5px;">${r.level}</span></div>
+                    <div class="lb-score-wrap">
+                        <div class="lb-score" style="color:${scoreColor};">${r.rejected?'🚫':r.score}</div>
+                        <div class="lb-pct">${subLine}</div>
+                    </div>
+                </div>`;
+            }).join('');
+
+        // Cache user list for UAC clicks
+        window._wcrUserList = rows.map(r => ({
+            uid: r.uid, name: r.name, level: r.level,
+            chanting: '', rounds: '?', role: 'user',
+            dept: userProfile?.department || '', team: userProfile?.team || ''
+        }));
+
+    } catch(err) { console.error('Leaderboard error:', err); container.innerHTML = '<p style="color:#dc2626;text-align:center;">Error loading.</p>'; }
+    _lbLoading = false;
+}
+
+// ═══════════════════════════════════════════════════════════
+// ADMIN LEADERBOARD (scope-aware — SA sees all, deptAdmin sees dept, TL sees team)
+// ═══════════════════════════════════════════════════════════
+let _adminLbMode = 'weekly', _adminLbLoading = false;
+
+window.setAdminLBMode = (mode, btn) => {
+    _adminLbMode = mode;
+    document.querySelectorAll('#sa-lb-mode-tabs .chart-tab-btn').forEach(b => b.classList.remove('active'));
+    if (btn) btn.classList.add('active');
+    // Reset filters on mode change
+    const fd = document.getElementById('sa-lb-filter-dept'); if (fd) fd.value = '';
+    const fl = document.getElementById('sa-lb-filter-level'); if (fl) fl.value = '';
+    const ft = document.getElementById('sa-lb-filter-team'); if (ft) ft.innerHTML = '<option value="">All Teams</option>';
+    loadAdminLeaderboard(true);
+};
+
+// Populate team dropdown based on selected dept filter
+window.updateSALBTeams = () => {
+    const dept = document.getElementById('sa-lb-filter-dept')?.value || '';
+    const teamSel = document.getElementById('sa-lb-filter-team');
+    if (!teamSel) return;
+    teamSel.innerHTML = '<option value="">All Teams</option>';
+    if (dept && DEPT_TEAMS[dept]) {
+        DEPT_TEAMS[dept].forEach(t => {
+            const o = document.createElement('option');
+            o.value = t; o.textContent = t;
+            teamSel.appendChild(o);
+        });
+    }
+};
+
+// Filter admin leaderboard rows by dept/level/team
+window.filterAdminLB = () => {
+    const dept  = document.getElementById('sa-lb-filter-dept')?.value || '';
+    const level = document.getElementById('sa-lb-filter-level')?.value || '';
+    const team  = document.getElementById('sa-lb-filter-team')?.value || '';
+    const rows = document.querySelectorAll('#sa-leaderboard-container .lb-row');
+    rows.forEach(row => {
+        const d = row.dataset.dept || '';
+        const l = row.dataset.level || '';
+        const t = row.dataset.team || '';
+        const show = (!dept || d === dept) && (!level || l === level) && (!team || t === team);
+        row.style.display = show ? '' : 'none';
+    });
+    // Hide podium when filtering (partial data makes podium misleading)
+    const podium = document.getElementById('sa-lb-podium');
+    if (podium) podium.style.display = (dept || level || team) ? 'none' : 'flex';
+};
+
+// Filter user leaderboard rows by level
+window.filterUserLB = () => {
+    const level = document.getElementById('lb-filter-level')?.value || '';
+    const rows = document.querySelectorAll('#leaderboard-container .lb-row');
+    rows.forEach(row => {
+        const l = row.dataset.level || '';
+        const show = !level || l === level;
+        row.style.display = show ? '' : 'none';
+    });
+    const podium = document.getElementById('lb-podium');
+    if (podium) podium.style.display = level ? 'none' : 'flex';
+};
+
+async function loadAdminLeaderboard(force) {
+    if (_adminLbLoading && !force) return;
+    _adminLbLoading = true;
+    const container = document.getElementById('sa-leaderboard-container');
+    const podiumEl  = document.getElementById('sa-lb-podium');
+    if (!container) { _adminLbLoading = false; return; }
+    container.innerHTML = '<p style="color:#aaa;text-align:center;padding:20px;">Loading…</p>';
+
+    try {
+        const usersSnap = await db.collection('users').get();
+        const filtered = usersSnap.docs.filter(doc => {
+            const d = doc.data();
+            if (d.role === 'superAdmin' || d.role === 'deptAdmin' || d.role === 'teamLeader' || d.role === 'admin') return false;
+            return matchesScope(d) && d.name;
+        });
+
+        const rows = [];
+        const MEDALS = ['🥇','🥈','🥉'];
+
+        if (_adminLbMode === 'daily') {
+            const targetDate = localDateStr(1);
+            const daySnaps = await Promise.all(filtered.map(uDoc => uDoc.ref.collection('sadhana').doc(targetDate).get()));
+            filtered.forEach((uDoc, i) => {
+                const u = uDoc.data(), snap = daySnaps[i];
+                const joinedDate = u.joinedDate || APP_START;
+                if (targetDate < joinedDate) return;
+                const dailyMax = getDailyMax(u.level || 'Level-1');
+                if (snap.exists && snap.data().sleepTime && snap.data().sleepTime !== 'NR') {
+                    const d = snap.data();
+                    rows.push({ uid: uDoc.id, name: u.name||'—', photo: u.photoURL||null, level: u.level||'L1', dept: u.department||'', team: u.team||'', score: d.totalScore??0, pct: Math.round((d.totalScore??0)*100/dailyMax), rejected: !!d.rejected });
+                } else {
+                    rows.push({ uid: uDoc.id, name: u.name||'—', photo: u.photoURL||null, level: u.level||'L1', dept: u.department||'', team: u.team||'', score: -30, pct: Math.round(-30*100/dailyMax), rejected: false, isNR: true });
+                }
+            });
+        } else {
+            const weekOffset = _adminLbMode === 'lastweek' ? 1 : 0;
+            const { dates } = getWeekDates(weekOffset);
+            const startStr = dates[0], endStr = dates[dates.length-1];
+            const weekSnaps = await Promise.all(filtered.map(uDoc =>
+                uDoc.ref.collection('sadhana')
+                    .where(firebase.firestore.FieldPath.documentId(), '>=', startStr)
+                    .where(firebase.firestore.FieldPath.documentId(), '<=', endStr).get()
+            ));
+            const todayStr = localDateStr(0);
+            filtered.forEach((uDoc, i) => {
+                const u = uDoc.data();
+                const dailyMax = getDailyMax(u.level || 'Level-1');
+                const joinedDate = u.joinedDate || APP_START;
+                const entryMap = new Map();
+                weekSnaps[i].docs.forEach(d => entryMap.set(d.id, d.data()));
+
+                let totalScore = 0, totalDays = 0, filledDays = 0;
+                dates.forEach(ds => {
+                    if (ds < APP_START || ds < joinedDate || ds > todayStr) return;
+                    if (ds === todayStr) {
+                        const entry = entryMap.get(ds);
+                        if (!entry || !entry.sleepTime || entry.sleepTime === 'NR') return;
+                    }
+                    totalDays++;
+                    const entry = entryMap.get(ds);
+                    if (entry && entry.sleepTime && entry.sleepTime !== 'NR') {
+                        totalScore += entry.totalScore ?? 0;
+                        filledDays++;
+                    } else {
+                        totalScore += -30; // NR penalty
+                    }
+                });
+                if (totalDays === 0) return;
+                const pct = Math.round(totalScore * 100 / (totalDays * dailyMax));
+                rows.push({ uid: uDoc.id, name: u.name||'—', photo: u.photoURL||null, level: u.level||'L1', dept: u.department||'', team: u.team||'', score: totalScore, pct, days: filledDays + '/' + totalDays, rejected: false });
+            });
+        }
+
+        rows.sort((a,b) => b.score - a.score);
+
+        // Podium
+        if (podiumEl && rows.length >= 2) {
+            const top = rows.slice(0, Math.min(3, rows.length));
+            const order = top.length === 2 ? [top[1], top[0]] : [top[1], top[0], top[2]];
+            const delays = top.length === 2 ? [0.4, 1.2] : [1.0, 1.6, 0.4];
+            const sizes = [58, 76, 48];
+            const borders = ['#94a3b8', '#fbbf24', '#cd7f32'];
+            podiumEl.innerHTML = order.map((r, i) => {
+                const rank = top.indexOf(r);
+                const medal = MEDALS[rank];
+                const sz = sizes[i] || 44;
+                const borderColor = borders[i] || '#e5e7eb';
+                const confetti = rank === 0 ? `<span style="position:absolute;top:-8px;font-size:20px;animation:confettiBurst 1.2s ease ${delays[i]+0.4}s both;">🎉</span>` : '';
+                return `<div style="display:flex;flex-direction:column;align-items:center;gap:4px;min-width:70px;position:relative;animation:podiumRise 0.6s cubic-bezier(0.34,1.56,0.64,1) ${delays[i]}s both;">
+                    ${confetti}
+                    <div class="av" style="width:${sz}px;height:${sz}px;border:3px solid ${borderColor};">${r.photo ? `<img src="${r.photo}">` : `<span class="av-init" style="font-size:${Math.round(sz*0.38)}px;">${(r.name||'?').split(' ').map(n=>n[0]).join('').substring(0,2).toUpperCase()}</span>`}</div>
+                    <span style="font-size:20px;">${medal}</span>
+                    <span style="font-size:11px;font-weight:700;color:#1A3C5E;text-align:center;max-width:80px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;">${r.name}</span>
+                    <span style="font-size:12px;font-weight:800;color:${r.pct>=70?'#16a34a':'#d97706'};">${r.score} pts</span>
+                </div>`;
+            }).join('');
+        } else if (podiumEl) { podiumEl.innerHTML = ''; }
+
+        // List
+        window._adminCmpUserList = rows.map(r => ({ uid: r.uid, name: r.name, level: r.level, chanting: '', rounds: '?', role: 'user', dept: r.dept, team: r.team }));
+        container.innerHTML = rows.length === 0
+            ? '<p style="color:#aaa;text-align:center;padding:20px;">No entries for this period.</p>'
+            : rows.map((r, i) => {
+                const medal = i < 3 ? MEDALS[i] : `<span style="font-size:13px;font-weight:700;color:#9ca3af;">#${i+1}</span>`;
+                const scoreColor = r.pct >= 70 ? '#15803d' : r.pct >= 50 ? '#d97706' : '#dc2626';
+                const subLine = r.isNR ? 'NR' : r.rejected ? 'Rejected' : (r.days ? `${r.pct}% · ${r.days}d` : `${r.pct}%`);
+                return `<div class="lb-row" data-dept="${r.dept}" data-level="${r.level}" data-team="${r.team}" onclick="openAdminCmpUser(${i})" style="cursor:pointer;animation-delay:${Math.min(i*0.03,0.18)}s;${r.isNR?'opacity:0.6;':''}">
+                    <div class="lb-rank">${medal}</div>
+                    ${avatarHtml(r.photo, r.name, 34)}
+                    <div class="lb-name">${r.name}<span style="font-size:10px;color:#9ca3af;margin-left:5px;">${r.level} · ${r.dept}</span></div>
+                    <div class="lb-score-wrap">
+                        <div class="lb-score" style="color:${scoreColor};">${r.rejected?'🚫':r.score}</div>
+                        <div class="lb-pct">${subLine}</div>
+                    </div>
+                </div>`;
+            }).join('');
+
+    } catch(err) { console.error('Admin Leaderboard error:', err); container.innerHTML = '<p style="color:#dc2626;text-align:center;">Error loading.</p>'; }
+    _adminLbLoading = false;
+}
+
+// ═══════════════════════════════════════════════════════════
+// SA HOME DASHBOARD
+// ═══════════════════════════════════════════════════════════
+let _saHomeLoaded = false;
+async function loadSAHome() {
+    if (_saHomeLoaded) return;
+    _saHomeLoaded = true;
+    try { await _doLoadSAHome(); } catch(e) { console.error('SA Home error:', e); _saHomeLoaded = false; }
+}
+async function _doLoadSAHome() {
+        const usersSnap = await db.collection('users').get();
+        const allUsers = usersSnap.docs.filter(d => {
+            const u = d.data();
+            if (u.role === 'superAdmin' || u.role === 'deptAdmin' || u.role === 'teamLeader' || u.role === 'admin') return false;
+            return matchesScope(u) && u.name;
+        }).sort((a,b) => (a.data().name||'').localeCompare(b.data().name||''));
+
+        document.getElementById('sa-total-users').textContent = allUsers.length;
+
+        // Build dept pills with counts
+        const deptCounts = { IGF:0, IYF:0, ICF_MTG:0, ICF_PRJI:0 };
+        allUsers.forEach(d => { const dept = d.data().department; if (deptCounts[dept] !== undefined) deptCounts[dept]++; });
+        const pillsEl = document.getElementById('sa-home-dept-pills');
+        if (pillsEl) {
+            let pillsHtml = `<button class="chart-tab-btn active" onclick="filterSAHomeTable('',this)" style="font-size:11px;padding:5px 12px;">All</button>`;
+            Object.entries(deptCounts).forEach(([dept, cnt]) => {
+                pillsHtml += `<button class="chart-tab-btn" onclick="filterSAHomeTable('${dept}',this)" style="font-size:11px;padding:5px 12px;">${dept} (${cnt})</button>`;
+            });
+            pillsEl.innerHTML = pillsHtml;
+        }
+
+        // Store for fill table rendering
+        window._saHomeAllUsers = allUsers;
+        renderSAFillTable(0);
+}
+
+let _saHomeWeekOffset = 0;
+window.switchSAHomeWeek = (offset, btn) => {
+    _saHomeWeekOffset = offset;
+    document.querySelectorAll('#sa-home-week-tabs .chart-tab-btn').forEach((b,i) => b.classList.toggle('active', i === offset));
+    renderSAFillTable(offset);
+};
+
+window.filterSAHomeTable = (dept, btn) => {
+    document.querySelectorAll('#sa-home-dept-pills .chart-tab-btn').forEach(b => b.classList.remove('active'));
+    if (btn) btn.classList.add('active');
+    const rows = document.querySelectorAll('#sa-fill-table .sa-fill-row');
+    rows.forEach(r => {
+        r.style.display = (!dept || r.dataset.dept === dept) ? '' : 'none';
+    });
+};
+
+async function renderSAFillTable(weekOffset) {
+    const tableEl = document.getElementById('sa-fill-table');
+    if (!tableEl) return;
+    const allUsers = window._saHomeAllUsers;
+    if (!allUsers || allUsers.length === 0) { tableEl.innerHTML = '<p style="color:#aaa;font-size:12px;text-align:center;">No data.</p>'; return; }
+
+    tableEl.innerHTML = '<p style="color:#aaa;text-align:center;padding:20px;">Loading…</p>';
+
+    const { dates } = getWeekDates(weekOffset);
+    const todayStr = localDateStr(0);
+    const startStr = dates[0], endStr = dates[dates.length-1];
+
+    // Fetch sadhana for all users in the week range
+    const snaps = await Promise.all(allUsers.map(uDoc =>
+        uDoc.ref.collection('sadhana')
+            .where(firebase.firestore.FieldPath.documentId(), '>=', startStr)
+            .where(firebase.firestore.FieldPath.documentId(), '<=', endStr).get()
+    ));
+
+    const rows = [];
+    allUsers.forEach((uDoc, idx) => {
+        const u = uDoc.data();
+        const snap = snaps[idx];
+        const entrySet = new Set();
+        if (snap) snap.docs.forEach(d => { if (d.data().sleepTime && d.data().sleepTime !== 'NR') entrySet.add(d.id); });
+
+        let filled = 0, missed = 0, totalDays = 0;
+        const joinedDate = u.joinedDate || APP_START;
+        dates.forEach(ds => {
+            if (ds < APP_START || ds < joinedDate || ds > todayStr) return;
+            if (ds === todayStr && !entrySet.has(ds)) return; // today not filled yet — don't penalize
+            totalDays++;
+            if (entrySet.has(ds)) filled++; else missed++;
+        });
+
+        const dailyMax = getDailyMax(u.level || 'Level-1');
+        let totalScore = 0;
+        if (snap) snap.docs.forEach(d => { const dd = d.data(); if (dd.sleepTime && dd.sleepTime !== 'NR') totalScore += (dd.totalScore||0); });
+        totalScore += missed * -30;
+        const pct = totalDays > 0 ? Math.round(totalScore * 100 / (totalDays * dailyMax)) : 0;
+
+        rows.push({ uid: uDoc.id, name: u.name, dept: u.department||'-', team: u.team||'-', level: u.level||'L1', chanting: u.chantingCategory||'', rounds: u.exactRounds||'?', filled, missed, totalDays, pct });
+    });
+
+    rows.sort((a,b) => b.pct - a.pct);
+
+    // Store for UAC clicks
+    window._saFillUserList = rows;
+
+    const pctColor = p => p >= 70 ? '#16a34a' : p >= 50 ? '#d97706' : '#dc2626';
+    tableEl.innerHTML = `<table class="data-table" style="font-size:12px;width:100%;">
+        <thead><tr>
+            <th style="text-align:left;position:sticky;left:0;background:#f8f9fa;z-index:4;box-shadow:2px 0 4px rgba(0,0,0,0.06);">Devotee</th>
+            <th>Dept</th><th>Filled</th><th>Missed</th><th>%</th>
+        </tr></thead>
+        <tbody>${rows.map((r, i) => `<tr class="sa-fill-row" data-dept="${r.dept}">
+            <td style="text-align:left;font-weight:600;position:sticky;left:0;background:white;z-index:2;box-shadow:2px 0 4px rgba(0,0,0,0.06);cursor:pointer;color:#1A3C5E;" onclick="openSAFillUser(${i})">${r.name}</td>
+            <td style="font-size:11px;color:#6b7280;">${r.dept}</td>
+            <td style="color:#16a34a;font-weight:600;">📋 ${r.filled}/${r.totalDays}</td>
+            <td style="color:${r.missed>0?'#dc2626':'#6b7280'};font-weight:${r.missed>0?'700':'400'};">${r.missed>0?'✕ '+r.missed:'—'}</td>
+            <td style="color:${pctColor(r.pct)};font-weight:700;">${r.pct}%</td>
+        </tr>`).join('')}</tbody></table>`;
+}
+
+window.openSAFillUser = (idx) => {
+    const r = (window._saFillUserList || [])[idx];
+    if (!r) return;
+    openUAC(r.uid, r.name, r.level, r.chanting, r.rounds, 'user', r.dept, r.team);
+};
+
+// ═══════════════════════════════════════════════════════════
+// SA TASKS VIEW
+// ═══════════════════════════════════════════════════════════
+async function loadSATasks() {
+    const container = document.getElementById('sa-tasks-container');
+    if (!container) return;
+    container.innerHTML = '<p style="color:#aaa;text-align:center;padding:20px;">Loading…</p>';
+    try {
+        const [taskSnap, usersSnap] = await Promise.all([
+            db.collection('tasks').orderBy('createdAt','desc').limit(20).get(),
+            db.collection('users').get()
+        ]);
+        if (taskSnap.empty) { container.innerHTML = '<p style="color:#aaa;text-align:center;padding:20px;">No tasks yet. Create one!</p>'; return; }
+
+        const userMap = {};
+        usersSnap.docs.forEach(d => { const u = d.data(); if (u.name) userMap[d.id] = u; });
+
+        container.innerHTML = taskSnap.docs.map(d => {
+            const t = d.data();
+            const completedBy = t.completedBy || [];
+            // Count target users
+            const targetUsers = Object.entries(userMap).filter(([uid, u]) => {
+                if (u.role === 'superAdmin' || u.role === 'deptAdmin' || u.role === 'teamLeader' || u.role === 'admin') return false;
+                return t.targetDept === 'all' || u.department === t.targetDept;
+            });
+            const done = targetUsers.filter(([uid]) => completedBy.includes(uid)).length;
+            const total = targetUsers.length;
+            const pct = total > 0 ? Math.round(done * 100 / total) : 0;
+            const pctColor = pct >= 70 ? '#16a34a' : pct >= 40 ? '#d97706' : '#dc2626';
+            const target = t.targetDept === 'all' ? 'All Depts' : t.targetDept;
+
+            return `<div class="card" style="padding:14px;margin-bottom:10px;">
+                <div style="display:flex;justify-content:space-between;align-items:flex-start;">
+                    <div style="flex:1;">
+                        <div style="font-size:14px;font-weight:700;color:#1A3C5E;">${t.title||'Untitled'}</div>
+                        <div style="font-size:12px;color:#555;margin-top:4px;white-space:pre-wrap;">${t.body||''}</div>
+                        ${t.attachmentUrl ? `<a href="${t.attachmentUrl}" target="_blank" style="font-size:12px;color:#3498db;">🔗 Attachment</a>` : ''}
+                        <div style="font-size:10px;color:#9ca3af;margin-top:6px;">📌 ${target} · by ${t.createdBy||'Admin'}</div>
+                    </div>
+                    ${isSuperAdmin() ? `<button onclick="deleteTask('${d.id}')" style="background:none;border:none;color:#dc2626;cursor:pointer;font-size:16px;padding:4px;margin:0;width:auto;">🗑️</button>` : ''}
+                </div>
+                <div style="margin-top:10px;display:flex;align-items:center;gap:8px;">
+                    <div class="home-act-bar" style="flex:1;"><div class="home-act-fill" style="width:${pct}%;background:${pctColor};"></div></div>
+                    <span style="font-size:12px;font-weight:700;color:${pctColor};">${done}/${total} (${pct}%)</span>
+                </div>
+            </div>`;
+        }).join('');
+    } catch(e) { console.error('SA Tasks error:', e); container.innerHTML = '<p style="color:#dc2626;text-align:center;">Error loading tasks.</p>'; }
+}
+
+// ═══════════════════════════════════════════════════════════
+// TASKS & ANNOUNCEMENTS (User view)
+// ═══════════════════════════════════════════════════════════
+async function loadTasks() {
+    const container = document.getElementById('tasks-container');
+    if (!container) return;
+    try {
+        const snap = await db.collection('tasks').orderBy('createdAt','desc').limit(10).get();
+        if (snap.empty) { container.innerHTML = '<p style="color:#aaa;font-size:12px;text-align:center;">No tasks yet.</p>'; updateTasksBadge(0); return; }
+        const myDept = userProfile?.department || '';
+        const myTasks = snap.docs.filter(d => {
+            const t = d.data();
+            return t.targetDept === 'all' || t.targetDept === myDept;
+        });
+        const pendingCount = myTasks.filter(d => !(d.data().completedBy||[]).includes(currentUser?.uid)).length;
+        updateTasksBadge(pendingCount);
+        const cards = myTasks.map(d => buildTaskCard(d.id, d.data(), false));
+        container.innerHTML = cards.length ? cards.join('') : '<p style="color:#aaa;font-size:12px;text-align:center;">No tasks for your department.</p>';
+    } catch(e) {
+        console.warn('Tasks load error:', e);
+        if (container) container.innerHTML = '<p style="color:#aaa;font-size:12px;text-align:center;">No tasks yet.</p>';
+        updateTasksBadge(0);
+    }
+}
+
+function updateTasksBadge(count) {
+    const badge = document.getElementById('header-tasks-badge');
+    if (!badge) return;
+    if (count > 0) { badge.textContent = count; badge.classList.remove('hidden'); }
+    else { badge.classList.add('hidden'); }
+}
+
+function buildTaskCard(id, t, showAdmin) {
+    const done = (t.completedBy || []).includes(currentUser?.uid);
+    const doneStyle = done ? 'opacity:0.6;' : '';
+    const urlLink = t.attachmentUrl ? `<a href="${t.attachmentUrl}" target="_blank" style="font-size:12px;color:#3498db;display:block;margin-top:4px;">🔗 ${t.attachmentUrl.length > 40 ? t.attachmentUrl.substring(0,40)+'...' : t.attachmentUrl}</a>` : '';
+    const fileLink = t.attachmentData && t.attachmentName ? `<a href="${t.attachmentData}" download="${t.attachmentName}" style="font-size:12px;color:#3498db;display:inline-flex;align-items:center;gap:4px;margin-top:6px;background:#f0f7ff;padding:4px 10px;border-radius:6px;text-decoration:none;">📎 ${t.attachmentName}</a>` : '';
+    const doneBtn = !isAnyAdmin() && !done ? `<button onclick="markTaskDone('${id}')" class="btn-success btn-sm" style="margin-top:8px;">✅ Mark Done</button>` : '';
+    const doneLbl = done ? '<span style="color:#16a34a;font-size:12px;font-weight:600;">✅ Completed</span>' : '';
+    const delBtn = showAdmin && isSuperAdmin() ? `<button onclick="deleteTask('${id}')" class="btn-danger btn-sm" style="margin-top:6px;">🗑️ Delete</button>` : '';
+    const target = t.targetDept === 'all' ? 'All Depts' : t.targetDept;
+    return `<div class="card" style="padding:14px;margin-bottom:10px;${doneStyle}">
+        <div style="font-size:14px;font-weight:700;color:#1A3C5E;">${t.title||'Untitled'}</div>
+        <div style="font-size:12px;color:#555;margin-top:4px;white-space:pre-wrap;">${t.body||''}</div>
+        ${urlLink}${fileLink}
+        <div style="font-size:10px;color:#9ca3af;margin-top:6px;">📌 ${target} · by ${t.createdBy||'Admin'} · ${(t.createdAt?.toDate?.() || new Date()).toLocaleDateString()}</div>
+        ${doneLbl}${doneBtn}${delBtn}
+    </div>`;
+}
+
+window.markTaskDone = async (taskId) => {
+    try {
+        await db.collection('tasks').doc(taskId).update({ completedBy: firebase.firestore.FieldValue.arrayUnion(currentUser.uid) });
+        showToast('✅ Task marked done!', 'success');
+        loadTasks();
+    } catch(e) { showToast('Error: ' + e.message, 'error'); }
+};
+
+let _taskFileData = null, _taskFileName = null;
+
+window.handleTaskFileSelect = (input) => {
+    const file = input.files[0];
+    if (!file) { _taskFileData = null; _taskFileName = null; return; }
+    if (file.size > 5 * 1024 * 1024) { showToast('File too large (max 5MB)', 'warn'); input.value = ''; return; }
+    _taskFileName = file.name;
+    document.getElementById('task-file-name').textContent = file.name;
+    const reader = new FileReader();
+    reader.onload = (e) => { _taskFileData = e.target.result; };
+    reader.readAsDataURL(file);
+};
+
+window.openTaskModal = () => {
+    if (!isAnyAdmin()) return;
+    document.getElementById('task-title').value = '';
+    document.getElementById('task-body').value = '';
+    document.getElementById('task-url').value = '';
+    document.getElementById('task-file-input').value = '';
+    document.getElementById('task-file-name').textContent = '';
+    _taskFileData = null; _taskFileName = null;
+    document.getElementById('task-target-dept').value = isDeptAdmin() ? userProfile.department : 'all';
+    document.getElementById('task-create-modal').classList.remove('hidden');
+};
+window.closeTaskModal = () => { document.getElementById('task-create-modal').classList.add('hidden'); };
+
+window.submitTask = async () => {
+    const title = document.getElementById('task-title').value.trim();
+    const body  = document.getElementById('task-body').value.trim();
+    const url   = document.getElementById('task-url').value.trim();
+    const dept  = document.getElementById('task-target-dept').value;
+    if (!title) { showToast('Title required', 'warn'); return; }
+    try {
+        const taskData = {
+            title, body, attachmentUrl: url, targetDept: dept,
+            createdBy: userProfile.name, createdByUid: currentUser.uid,
+            createdAt: firebase.firestore.FieldValue.serverTimestamp(),
+            completedBy: []
+        };
+        if (_taskFileData && _taskFileName) {
+            taskData.attachmentData = _taskFileData;
+            taskData.attachmentName = _taskFileName;
+        }
+        await db.collection('tasks').add(taskData);
+        showToast('✅ Task posted!', 'success');
+        _taskFileData = null; _taskFileName = null;
+        closeTaskModal();
+        loadTasks();
+    } catch(e) { showToast('Error: ' + e.message, 'error'); }
+};
+
+window.deleteTask = async (taskId) => {
+    if (!isSuperAdmin()) return;
+    if (!confirm('Delete this task?')) return;
+    try {
+        await db.collection('tasks').doc(taskId).delete();
+        showToast('Task deleted.', 'success');
+        loadTasks();
+    } catch(e) { showToast('Error: ' + e.message, 'error'); }
+};
+
+// ═══════════════════════════════════════════════════════════
+// REJECT MODAL (replaces inline prompt)
+// ═══════════════════════════════════════════════════════════
+let _rejectState = null;
+
+window.openRejectModal = async (userId, dateStr, isRevoke) => {
+    try {
+        const docSnap = await db.collection('users').doc(userId).collection('sadhana').doc(dateStr).get();
+        if (!docSnap.exists) { showToast('Entry not found', 'error'); return; }
+        const d = docSnap.data();
+        const uSnap = await db.collection('users').doc(userId).get();
+        const uData = uSnap.exists ? uSnap.data() : {};
+        const dailyMax = getDailyMax(uData.level || 'Level-1');
+
+        _rejectState = { userId, dateStr, isRevoke, data: d };
+        const titleEl = document.getElementById('reject-modal-title');
+        const bodyEl  = document.getElementById('reject-modal-body');
+        const btnEl   = document.getElementById('reject-confirm-btn');
+
+        if (isRevoke) {
+            titleEl.textContent = `✅ Restore Entry — ${dateStr}`;
+            bodyEl.innerHTML = `Current: <strong style="color:#dc2626;">-50 (rejected)</strong><br>Will restore to: <strong style="color:#16a34a;">${d.originalTotalScore??0} pts</strong>`;
+            btnEl.textContent = 'Restore';
+            btnEl.className = 'btn-success';
+            btnEl.style.flex = '1';
+        } else {
+            titleEl.textContent = `🚫 Reject Entry — ${dateStr}`;
+            bodyEl.innerHTML = `Current score: <strong>${d.totalScore??0}</strong> / ${dailyMax}<br>Will be replaced with: <strong style="color:#dc2626;">-50 penalty</strong>`;
+            btnEl.textContent = 'Reject';
+            btnEl.className = 'btn-danger';
+            btnEl.style.flex = '1';
+        }
+        document.getElementById('reject-remarks').value = '';
+        document.getElementById('reject-modal').classList.remove('hidden');
+    } catch(e) { showToast('Error: ' + e.message, 'error'); }
+};
+
+window.closeRejectModal = () => {
+    document.getElementById('reject-modal').classList.add('hidden');
+    _rejectState = null;
+};
+
+window.submitRejectAction = async () => {
+    if (!_rejectState) return;
+    const { userId, dateStr, isRevoke, data } = _rejectState;
+    const remarks = document.getElementById('reject-remarks').value.trim();
+    if (!remarks) { showToast('Remarks required', 'warn'); return; }
+
+    try {
+        const ref = db.collection('users').doc(userId).collection('sadhana').doc(dateStr);
+        if (isRevoke) {
+            await ref.update({
+                rejected: false,
+                totalScore: data.originalTotalScore ?? data.totalScore,
+                dayPercent: data.originalDayPercent ?? data.dayPercent,
+                revokedAt: firebase.firestore.FieldValue.serverTimestamp(),
+                revokedBy: userProfile.name,
+                revocationReason: remarks
+            });
+            showToast('✅ Entry restored!', 'success');
+        } else {
+            await ref.update({
+                rejected: true,
+                rejectedAt: firebase.firestore.FieldValue.serverTimestamp(),
+                rejectedBy: userProfile.name,
+                rejectionReason: remarks,
+                originalTotalScore: data.totalScore ?? 0,
+                originalDayPercent: data.dayPercent ?? 0,
+                totalScore: -50,
+                dayPercent: -31
+            });
+            showToast('🚫 Entry rejected with -50 penalty!', 'success');
+        }
+        closeRejectModal();
+    } catch(e) { showToast('Error: ' + e.message, 'error'); }
+};
+
+// ═══════════════════════════════════════════════════════════
+// BEST/WEAK PERFORMERS
+// ═══════════════════════════════════════════════════════════
+let _perfAllData = [], _perfTab = 'weekly', _perfYear = null, _perfMonth = null, _perfWeekIdx = 0;
+
+function computePerformers(filteredDocs, sadhanaCache) {
+    _perfAllData = filteredDocs.map((uDoc) => {
+        const u = uDoc.data();
+        const ents = sadhanaCache.get(uDoc.id) || [];
+        const _entsMap = new Map(); ents.forEach(e => _entsMap.set(e.date, e));
+        return { id: uDoc.id, name: u.name||'', level: u.level||'Level-1', ents, _entsMap, joinedDate: u.joinedDate||APP_START };
+    });
+    initPerfDropdowns();
+    renderPerformers();
+}
+
+function initPerfDropdowns() {
+    const now = new Date();
+    const curYear = now.getFullYear();
+    const curMon = now.getMonth();
+    const startYear = parseInt(APP_START.substring(0,4));
+
+    // Year options
+    let yearOpts = '';
+    for (let y = curYear; y >= startYear; y--) yearOpts += `<option value="${y}">${y}</option>`;
+    ['perf-year-sel','sa-perf-year-sel'].forEach(id => {
+        const el = document.getElementById(id);
+        if (el) { el.innerHTML = yearOpts; el.value = String(curYear); }
+    });
+    _perfYear = curYear;
+    _perfMonth = curMon;
+    populateMonthDropdown();
+    populateWeekDropdown();
+}
+
+function populateMonthDropdown() {
+    const months = ['Jan','Feb','Mar','Apr','May','Jun','Jul','Aug','Sep','Oct','Nov','Dec'];
+    const now = new Date();
+    const curYear = now.getFullYear(), curMon = now.getMonth();
+    const startYear = parseInt(APP_START.substring(0,4)), startMon = parseInt(APP_START.substring(5,7)) - 1;
+    const fromMon = _perfYear === startYear ? startMon : 0;
+    const toMon = _perfYear === curYear ? curMon : 11;
+    let opts = '';
+    for (let m = toMon; m >= fromMon; m--) opts += `<option value="${m}">${months[m]}</option>`;
+    ['perf-month-sel','sa-perf-month-sel'].forEach(id => {
+        const el = document.getElementById(id);
+        if (el) { el.innerHTML = opts; el.value = String(_perfMonth <= toMon && _perfMonth >= fromMon ? _perfMonth : toMon); }
+    });
+    _perfMonth = parseInt(document.getElementById('perf-month-sel')?.value ?? document.getElementById('sa-perf-month-sel')?.value ?? curMon);
+}
+
+function populateWeekDropdown() {
+    const monthStart = new Date(_perfYear, _perfMonth, 1);
+    const monthEnd = new Date(_perfYear, _perfMonth + 1, 0);
+    const weeks = getWeeksInMonth(monthStart, monthEnd);
+    const fmt = d => `${String(d.getDate()).padStart(2,'0')} ${d.toLocaleString('en-GB',{month:'short'})}`;
+    let opts = '';
+    weeks.forEach((sunStr, i) => {
+        const [y,m,d] = sunStr.split('-').map(Number);
+        const sun = new Date(y, m-1, d);
+        const sat = new Date(y, m-1, d+6);
+        opts += `<option value="${i}">${fmt(sun)} – ${fmt(sat)}</option>`;
+    });
+    const defaultIdx = Math.max(0, weeks.length - 2);
+    ['perf-week-sel','sa-perf-week-sel'].forEach(id => {
+        const el = document.getElementById(id);
+        if (el) { el.innerHTML = opts; el.value = String(defaultIdx); el.style.display = _perfTab === 'weekly' ? '' : 'none'; }
+    });
+    _perfWeekIdx = defaultIdx;
+}
+
+function getWeeksInMonth(monthStart, monthEnd) {
+    const weeks = [];
+    const firstSun = new Date(monthStart);
+    firstSun.setDate(firstSun.getDate() - firstSun.getDay());
+    let cur = new Date(firstSun);
+    const toLocal = d => `${d.getFullYear()}-${String(d.getMonth()+1).padStart(2,'0')}-${String(d.getDate()).padStart(2,'0')}`;
+    while (cur <= monthEnd) {
+        weeks.push(toLocal(cur));
+        cur.setDate(cur.getDate() + 7);
+    }
+    return weeks;
+}
+
+window.onPerfYearChange = () => {
+    _perfYear = parseInt(document.getElementById('perf-year-sel')?.value || document.getElementById('sa-perf-year-sel')?.value);
+    // Sync both selectors
+    ['perf-year-sel','sa-perf-year-sel'].forEach(id => { const el = document.getElementById(id); if (el) el.value = String(_perfYear); });
+    populateMonthDropdown();
+    populateWeekDropdown();
+    renderPerformers();
+};
+
+window.onPerfMonthChange = () => {
+    _perfMonth = parseInt(document.getElementById('perf-month-sel')?.value || document.getElementById('sa-perf-month-sel')?.value);
+    ['perf-month-sel','sa-perf-month-sel'].forEach(id => { const el = document.getElementById(id); if (el) el.value = String(_perfMonth); });
+    populateWeekDropdown();
+    renderPerformers();
+};
+
+window.onPerfWeekChange = () => {
+    _perfWeekIdx = parseInt(document.getElementById('perf-week-sel')?.value || document.getElementById('sa-perf-week-sel')?.value) || 0;
+    ['perf-week-sel','sa-perf-week-sel'].forEach(id => { const el = document.getElementById(id); if (el) el.value = String(_perfWeekIdx); });
+    renderPerformers();
+};
+
+window.setPerfTab = (tab, btn) => {
+    _perfTab = tab;
+    document.querySelectorAll('.perf-tab-btn').forEach(b => b.classList.remove('active'));
+    if (btn) btn.classList.add('active');
+    // Also sync the other panel's buttons
+    document.querySelectorAll('.perf-tab-btn').forEach(b => {
+        if (b.textContent.trim().toLowerCase() === tab) b.classList.add('active');
+    });
+    ['perf-week-sel','sa-perf-week-sel'].forEach(id => {
+        const el = document.getElementById(id);
+        if (el) el.style.display = tab === 'weekly' ? '' : 'none';
+    });
+    renderPerformers();
+};
+
+function renderPerformers() {
+    if (_perfAllData.length < 2) {
+        ['perf-charts','admin-perf-charts'].forEach(id => { const el = document.getElementById(id); if (el) el.innerHTML = ''; });
+        highlightWCRColumn(null);
+        return;
+    }
+
+    const monthStart = new Date(_perfYear, _perfMonth, 1);
+    const monthEnd = new Date(_perfYear, _perfMonth + 1, 0);
+    const weeks = getWeeksInMonth(monthStart, monthEnd);
+    const todayStr = localDateStr(0);
+
+    const results = _perfAllData.map(u => {
+        let pct = 0;
+        if (_perfTab === 'weekly') {
+            // Single week
+            const weekSun = weeks[Math.min(_perfWeekIdx, weeks.length-1)] || weeks[0];
+            let tot = 0, days = 0;
+            for (let i = 0; i < 7; i++) {
+                const [wy,wm,wd] = weekSun.split('-').map(Number); const d = new Date(wy,wm-1,wd+i);
+                const ds = `${d.getFullYear()}-${String(d.getMonth()+1).padStart(2,'0')}-${String(d.getDate()).padStart(2,'0')}`;
+                if (ds < APP_START || ds < (u.joinedDate||APP_START) || ds > todayStr) continue;
+                if (ds === todayStr) { const e = u.ents.find(en => en.date === ds); if (!e) continue; }
+                days++;
+                const e = u._entsMap ? u._entsMap.get(ds) : u.ents.find(en => en.date === ds);
+                tot += e ? (e.score||0) : -30;
+            }
+            const dailyMax = getDailyMax(u.level);
+            pct = days > 0 ? Math.round(tot * 100 / (days * dailyMax)) : 0;
+        } else {
+            // Monthly — average of all weeks
+            let sum = 0, count = 0;
+            weeks.forEach(weekSun => {
+                let tot = 0, days = 0;
+                for (let i = 0; i < 7; i++) {
+                    const [wy,wm,wd] = weekSun.split('-').map(Number); const d = new Date(wy,wm-1,wd+i);
+                    const ds = d.toISOString().split('T')[0];
+                    if (ds < APP_START || ds < (u.joinedDate||APP_START) || ds > todayStr) continue;
+                    if (ds === todayStr) { const e = u.ents.find(en => en.date === ds); if (!e) continue; }
+                    days++;
+                    const e = u._entsMap ? u._entsMap.get(ds) : u.ents.find(en => en.date === ds);
+                    tot += e ? (e.score||0) : -30;
+                }
+                const dailyMax = getDailyMax(u.level);
+                if (days > 0) { sum += Math.round(tot * 100 / (days * dailyMax)); count++; }
+            });
+            pct = count > 0 ? Math.round(sum / count) : 0;
+        }
+        return { name: u.name, pct, level: u.level };
+    });
+
+    results.sort((a,b) => b.pct - a.pct);
+    const best = results.slice(0, 3);
+    const weak = results.slice(-3).reverse();
+
+    // SVG ring chart builder
+    function svgRing(items, colors, centerPct, centerColor, centerLabel) {
+        const radii = [68, 50, 32];
+        const sw = 13;
+        let arcs = '';
+        items.forEach((r, i) => {
+            if (i >= 3) return;
+            const rd = radii[i];
+            const circ = 2 * Math.PI * rd;
+            const pctClamped = Math.max(0, Math.min(r.pct, 100));
+            const dashLen = (pctClamped / 100) * circ;
+            arcs += `<circle cx="80" cy="80" r="${rd}" fill="none" stroke="#e5e7eb" stroke-width="${sw}" />`;
+            arcs += `<circle cx="80" cy="80" r="${rd}" fill="none" stroke="${colors[i]}" stroke-width="${sw}" stroke-linecap="round" stroke-dasharray="${dashLen} ${circ}" transform="rotate(-90 80 80)" style="transition:stroke-dasharray 0.8s ease;" />`;
+        });
+        return `<svg viewBox="0 0 160 160" style="width:140px;height:140px;">
+            ${arcs}
+            <text x="80" y="74" text-anchor="middle" font-size="20" font-weight="800" fill="${centerColor}">${centerPct}%</text>
+            <text x="80" y="92" text-anchor="middle" font-size="9" fill="#6b7280">${centerLabel}</text>
+        </svg>`;
+    }
+
+    const legendHtml = (items, colors) => items.map((r, i) => `<div style="display:flex;align-items:center;gap:8px;margin-bottom:5px;">
+        <div style="width:8px;height:8px;border-radius:50%;background:${colors[i]||'#888'};flex-shrink:0;"></div>
+        <span style="font-size:12px;flex:1;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;">${r.name}</span>
+        <span style="font-size:12px;font-weight:700;color:${colors[i]||'#888'};">${r.pct}%</span>
+    </div>`).join('');
+
+    const bestColors = ['#3b82f6','#60a5fa','#93c5fd'];
+    const weakColors = ['#ef4444','#f97316','#fbbf24'];
+
+    const html = `<div style="display:grid;grid-template-columns:1fr 1fr;gap:12px;">
+        <div class="card" style="padding:12px;text-align:center;">
+            <div style="font-size:12px;font-weight:700;color:#1d4ed8;margin-bottom:8px;">🏆 Top Performers</div>
+            ${svgRing(best, bestColors, best[0]?.pct||0, '#3b82f6', 'top score')}
+            <div style="text-align:left;margin-top:8px;">${legendHtml(best, bestColors)}</div>
+        </div>
+        <div class="card" style="padding:12px;text-align:center;">
+            <div style="font-size:12px;font-weight:700;color:#dc2626;margin-bottom:8px;">🔻 Needs Attention</div>
+            ${svgRing(weak, weakColors, weak[0]?.pct||0, '#ef4444', 'lowest')}
+            <div style="text-align:left;margin-top:8px;">${legendHtml(weak, weakColors)}</div>
+        </div>
+    </div>`;
+
+    ['perf-charts','admin-perf-charts'].forEach(id => { const el = document.getElementById(id); if (el) el.innerHTML = html; });
+
+    // Highlight the selected week's column in WCR table
+    if (_perfTab === 'weekly') {
+        const selectedSun = weeks[Math.min(_perfWeekIdx, weeks.length-1)];
+        setTimeout(() => highlightWCRColumn(selectedSun), 100);
+    } else {
+        highlightWCRColumn(null);
+    }
+}
+
+function highlightWCRColumn(selectedSunStr) {
+    // Remove all existing highlights
+    document.querySelectorAll('.col-highlight').forEach(el => el.classList.remove('col-highlight'));
+    if (!selectedSunStr) return;
+
+    // Find matching column in WCR tables by header text
+    const [sy,sm,sd] = selectedSunStr.split('-').map(Number);
+    const sun = new Date(sy, sm-1, sd);
+    const fmt = d => `${String(d.getDate()).padStart(2,'0')} ${d.toLocaleString('en-GB',{month:'short'})}`;
+    const matchText = fmt(sun);
+
+    ['comp-perf-table','admin-comparative-reports-container'].forEach(containerId => {
+        const container = document.getElementById(containerId);
+        if (!container) return;
+        const table = container.querySelector?.('table') || container;
+        if (!table || !table.querySelectorAll) return;
+        const ths = table.querySelectorAll('th.comp-th, th');
+        let matchCol = -1;
+        ths.forEach((th, i) => { if (th.textContent.trim().includes(matchText)) matchCol = i; });
+        if (matchCol < 0) return;
+        if (ths[matchCol]) ths[matchCol].classList.add('col-highlight');
+        table.querySelectorAll('tbody tr').forEach(tr => {
+            const tds = tr.querySelectorAll('td');
+            if (tds[matchCol]) tds[matchCol].classList.add('col-highlight');
+        });
+    });
+}
+
+// ═══════════════════════════════════════════════════════════
+// DEPARTMENT EXCEL DOWNLOAD
+// ═══════════════════════════════════════════════════════════
+window.downloadDeptExcel = async (dept) => {
+    if (!dept || !isAnyAdmin()) return;
+    showToast('Generating ' + dept + ' report…', 'info');
+    try {
+        const usersSnap = await db.collection('users').get();
+        const deptUsers = usersSnap.docs.filter(d => {
+            const u = d.data();
+            if (u.role === 'superAdmin' || u.role === 'deptAdmin' || u.role === 'teamLeader' || u.role === 'admin') return false;
+            return u.department === dept && u.name && matchesScope(u);
+        }).sort((a,b) => (a.data().name||'').localeCompare(b.data().name||''));
+
+        if (deptUsers.length === 0) { showToast('No users found in ' + dept, 'warn'); return; }
+
+        const wb = XLSX.utils.book_new();
+        const allDeptSnaps = await Promise.all(deptUsers.map(uDoc => uDoc.ref.collection('sadhana').get()));
+        for (let di = 0; di < deptUsers.length; di++) {
+            const uDoc = deptUsers[di];
+            const u = uDoc.data();
+            const saSnap = allDeptSnaps[di];
+            const level = u.level || 'Level-1';
+            const dailyMax = getDailyMax(level);
+
+            // Group by week
+            const weekMap = {};
+            saSnap.docs.forEach(d => {
+                const wi = getWeekInfo(d.id);
+                if (!weekMap[wi.label]) weekMap[wi.label] = { sunStr: wi.sunStr, label: wi.label, data: [] };
+                weekMap[wi.label].data.push({ id: d.id, ...d.data() });
+            });
+
+            const rows = [
+                ['Name', u.name], ['Level', level], ['Dept', dept], ['Team', u.team||''],
+                ['Chanting', u.chantingCategory||''], ['Rounds', u.exactRounds||''], [],
+                ['Date','Sleep','Wake','Chant','Read','Hear','Inst','DaySleep','Service','Notes','Total','%']
+            ];
+
+            Object.values(weekMap).sort((a,b) => b.sunStr.localeCompare(a.sunStr)).forEach(wk => {
+                wk.data.sort((a,b) => a.id.localeCompare(b.id)).forEach(e => {
+                    rows.push([
+                        e.id, e.sleepTime||'NR', e.wakeupTime||'NR', e.chantingTime||'NR',
+                        e.readingMinutes||0, e.hearingMinutes||0, e.instrumentMinutes||0,
+                        e.daySleepMinutes||0, e.serviceMinutes||0, e.notesMinutes||0,
+                        e.totalScore||0, (e.dayPercent||0)+'%'
+                    ]);
+                });
+                const wkTotal = wk.data.reduce((s,e) => s + (e.totalScore||0), 0);
+                const wkFD = wk.data.length * dailyMax;
+                rows.push(['WEEK TOTAL','','','','','','','','','', wkTotal, Math.round(wkTotal*100/wkFD)+'%']);
+                rows.push([]);
+            });
+
+            const ws = XLSX.utils.aoa_to_sheet(rows);
+            ws['!cols'] = Array(12).fill({ wch: 12 });
+            const sheetName = (u.name||'User').substring(0,31);
+            XLSX.utils.book_append_sheet(wb, ws, sheetName);
+        }
+
+        xlsxSave(wb, `${dept}_Sadhana_Report.xlsx`);
+        showToast('✅ Downloaded!', 'success');
+    } catch(e) { showToast('Error: ' + e.message, 'error'); console.error(e); }
 };

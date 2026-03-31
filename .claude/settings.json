@@ -1,0 +1,11 @@
+{
+  "permissions": {
+    "allow": [
+      "Bash(curl -sL \"https://raw.githubusercontent.com/riyagupta9872-prog/Coordinators-Sadhana-App/main/app.js\" -o /tmp/remote_app.js)",
+      "Bash(curl -sL \"https://raw.githubusercontent.com/riyagupta9872-prog/Coordinators-Sadhana-App/main/index.html\" -o /tmp/remote_index.html)",
+      "Bash(sed -n '42,42p' /tmp/remote_app.js)",
+      "Bash(sed -n '74,100p' /tmp/remote_app.js)",
+      "Bash(sed -n '1419,1490p' /tmp/remote_app.js)"
+    ]
+  }
+}

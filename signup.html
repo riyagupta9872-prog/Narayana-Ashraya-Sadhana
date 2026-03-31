@@ -188,7 +188,8 @@
                 team,
                 chantingCategory: chanting,
                 exactRounds:      rounds,
-                role:             'user'
+                role:             'user',
+                joinedDate:       new Date().toISOString().split('T')[0]
             });
 
             // 3. Success — redirect to app
