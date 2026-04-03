@@ -43,6 +43,7 @@
         .uac-hsub { font-size:12px;color:#888;margin-top:2px; }
         .uac-x { background:none;border:none;font-size:22px;color:#aaa;cursor:pointer;width:auto;padding:0;margin:0; }
         .uac-body { padding:10px 14px 28px;display:grid;grid-template-columns:1fr 1fr;gap:8px; }
+        #uac-activity-wrap { display:contents; }
         .uac-body .uac-fullwidth { grid-column:1/-1; }
         .uac-btn { display:flex;flex-direction:column;align-items:center;gap:8px;padding:14px 8px;border:none;border-radius:12px;background:#f8fafc;font-size:13px;font-weight:600;color:#1a252f;cursor:pointer;text-align:center;border:1px solid var(--border);width:auto;margin:0; }
         .uac-btn:active { background:#f4f7f6; }
@@ -72,7 +73,7 @@
         /* ── Submit Success Overlay ── */
         .ss-overlay { position:fixed;inset:0;background:rgba(30,58,95,0.6);backdrop-filter:blur(6px);z-index:1200;display:flex;align-items:center;justify-content:center;opacity:0;pointer-events:none;transition:opacity 0.3s; }
         .ss-overlay.visible { opacity:1;pointer-events:all; }
-        .ss-card { background:white;border-radius:20px;padding:28px;text-align:center;max-width:320px;width:90%;box-shadow:0 8px 40px rgba(0,0,0,0.2); }
+        .ss-card { background:white;border-radius:24px;padding:40px 36px;text-align:center;max-width:400px;width:92%;box-shadow:0 8px 40px rgba(0,0,0,0.2); }
         .ss-overlay.visible .ss-card { animation:successCardIn 0.4s cubic-bezier(0.34,1.56,0.64,1) both; }
         @keyframes successCardIn { from { opacity:0;transform:scale(0.82) translateY(24px); } to { opacity:1;transform:scale(1) translateY(0); } }
         .ss-bar-track { height:8px;background:#e5e7eb;border-radius:4px;overflow:hidden;margin:12px 0; }
@@ -886,8 +887,8 @@ function closeUserGuide() {
             <select id="profile-chanting" required>
                 <option value="" disabled selected>Select chanting category</option>
                 <option value="0-4 rounds">0-4 Rounds</option>
-                <option value="4-8 rounds">4-8 Rounds</option>
-                <option value="8-16 rounds">8-16 Rounds</option>
+                <option value="5-8 rounds">5-8 Rounds</option>
+                <option value="9-16 rounds">9-16 Rounds</option>
                 <option value="16+ rounds">16+ Rounds</option>
             </select>
 
@@ -1106,8 +1107,6 @@ function closeUserGuide() {
                     <button type="submit" class="btn-success" style="margin-top:16px;">Submit Sadhana</button>
                 </form>
             </div>
-        </div>
-
             </div><!-- /sadhana-entry-sub -->
             <div id="sadhana-reports-sub" class="subtab-panel">
                 <div style="margin-bottom:14px;">
@@ -1137,11 +1136,7 @@ function closeUserGuide() {
                 <button class="subtab-btn" onclick="switchTeamTab('wcr',this)">WCR</button>
             </div>
             <div id="team-wcr-sub" class="subtab-panel">
-                <div class="card" style="overflow-x:auto;overflow-y:auto;max-height:75vh;">
-                    <h3 style="margin:0 0 14px;color:var(--primary);font-size:16px;">🏆 Department Performance (WCR)</h3>
-                    <div id="user-wcr-container"><p style="color:#aaa;text-align:center;padding:20px;">Loading…</p></div>
-                </div>
-                <div id="perf-section" style="margin-top:16px;">
+                <div id="perf-section" style="margin-bottom:16px;">
                     <div style="display:flex;align-items:center;justify-content:space-between;flex-wrap:wrap;gap:8px;margin-bottom:10px;">
                         <h4 style="margin:0;color:#1A3C5E;font-size:14px;">⭐ Best & Weak Performers</h4>
                         <div style="display:flex;gap:6px;align-items:center;flex-wrap:wrap;">
@@ -1153,6 +1148,10 @@ function closeUserGuide() {
                         </div>
                     </div>
                     <div id="perf-charts"></div>
+                </div>
+                <div class="card" style="overflow-x:auto;overflow-y:auto;max-height:75vh;">
+                    <h3 style="margin:0 0 14px;color:var(--primary);font-size:16px;">🏆 Department Performance (WCR)</h3>
+                    <div id="user-wcr-container"><p style="color:#aaa;text-align:center;padding:20px;">Loading…</p></div>
                 </div>
             </div>
             <div id="team-rankings-sub" class="subtab-panel active">
@@ -1167,7 +1166,7 @@ function closeUserGuide() {
                     </select>
                 </div>
                 <div id="lb-info" style="font-size:12px;color:#6b7280;margin-bottom:8px;"></div>
-                <div id="lb-podium" style="display:flex;justify-content:center;gap:8px;margin:12px 0;min-height:100px;"></div>
+                <div id="lb-podium" style="display:flex;justify-content:center;align-items:flex-start;gap:16px;margin:16px 0;min-height:160px;"></div>
                 <div id="leaderboard-container"></div>
             </div>
         </div>
@@ -1293,7 +1292,7 @@ function closeUserGuide() {
                         </select>
                     </div>
                     <div id="sa-lb-info" style="font-size:12px;color:#6b7280;margin-bottom:8px;"></div>
-                    <div id="sa-lb-podium" style="display:flex;justify-content:center;gap:8px;margin:12px 0;min-height:100px;"></div>
+                    <div id="sa-lb-podium" style="display:flex;justify-content:center;align-items:flex-start;gap:16px;margin:16px 0;min-height:160px;"></div>
                     <div id="sa-leaderboard-container"></div>
                 </div>
 
@@ -2250,6 +2249,17 @@ function closeUserGuide() {
                 <div class="uac-ico" style="background:#fef3c7;">📊</div><span>Activity Analysis</span>
             </button>
         </div>
+        <div id="uac-level-wrap" class="uac-fullwidth" style="display:none;">
+            <hr class="uac-divider">
+            <div class="uac-role-label">Change Level</div>
+            <select id="uac-level-sel" class="uac-role-sel" onchange="uacLevelChange(this)">
+                <option value="" disabled selected>Select Level…</option>
+                <option value="Level-1">Level-1</option>
+                <option value="Level-2">Level-2</option>
+                <option value="Level-3">Level-3</option>
+                <option value="Level-4">Level-4</option>
+            </select>
+        </div>
         <div id="uac-role-wrap" class="uac-fullwidth" style="display:none;">
             <hr class="uac-divider">
             <div class="uac-role-label">Change Role</div>
@@ -2309,12 +2319,12 @@ function closeUserGuide() {
 <!-- ══ Submit Success Overlay ══ -->
 <div id="submit-success-overlay" class="ss-overlay">
     <div class="ss-card">
-        <div style="font-size:50px;line-height:1;margin-bottom:10px;">🙏</div>
-        <div style="font-size:40px;font-weight:800;color:#1A3C5E;line-height:1;" id="ss-score">0</div>
-        <div style="font-size:13px;color:#6b7280;margin-top:4px;margin-bottom:14px;" id="ss-max">out of 105 pts</div>
+        <div style="font-size:64px;line-height:1;margin-bottom:14px;">🙏</div>
+        <div style="font-size:52px;font-weight:800;color:#1A3C5E;line-height:1;" id="ss-score">0</div>
+        <div style="font-size:15px;color:#6b7280;margin-top:6px;margin-bottom:18px;" id="ss-max">out of 105 pts</div>
         <div class="ss-bar-track"><div class="ss-bar" id="ss-bar"></div></div>
-        <div style="font-size:24px;font-weight:800;color:#3498db;margin:8px 0;" id="ss-pct">0%</div>
-        <div id="ss-msg" style="font-size:13px;color:#6b7280;font-style:italic;"></div>
+        <div style="font-size:32px;font-weight:800;color:#3498db;margin:12px 0;" id="ss-pct">0%</div>
+        <div id="ss-msg" style="font-size:14px;color:#6b7280;font-style:italic;"></div>
     </div>
 </div>
 

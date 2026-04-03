@@ -222,6 +222,11 @@ function isPastDate(dateStr) {
     return dateStr < localDateStr(0);
 }
 
+// Convert a Date object to YYYY-MM-DD using local timezone (NOT UTC)
+function toLocalDS(d) {
+    return `${d.getFullYear()}-${String(d.getMonth()+1).padStart(2,'0')}-${String(d.getDate()).padStart(2,'0')}`;
+}
+
 function getWeekDates(weekOffset) {
     const today = new Date();
     const dayOfWeek = today.getDay();
@@ -412,16 +417,17 @@ function xlsxSave(wb, filename) {
 // Helper: set cell style (bold, fill, font color, alignment, border)
 function styleCell(ws, cellRef, opts = {}) {
     if (!ws[cellRef]) ws[cellRef] = { v:'', t:'s' };
+    const border = {
+        top:    { style:'thin', color:{rgb:'999999'} },
+        bottom: { style:'thin', color:{rgb:'999999'} },
+        left:   { style:'thin', color:{rgb:'999999'} },
+        right:  { style:'thin', color:{rgb:'999999'} }
+    };
     ws[cellRef].s = {
-        font:      { bold: opts.bold||false, color: opts.fontColor ? {rgb: opts.fontColor} : undefined, sz: opts.sz||11 },
+        font:      { bold: opts.bold||false, color: opts.fontColor ? {rgb: opts.fontColor} : {rgb:'1A252F'}, sz: opts.sz||11, name:'Segoe UI' },
         fill:      opts.fill ? { fgColor: {rgb: opts.fill}, patternType:'solid' } : undefined,
         alignment: { horizontal: opts.align||'center', vertical:'center', wrapText: false },
-        border: {
-            top:    { style:'thin', color:{rgb:'CCCCCC'} },
-            bottom: { style:'thin', color:{rgb:'CCCCCC'} },
-            left:   { style:'thin', color:{rgb:'CCCCCC'} },
-            right:  { style:'thin', color:{rgb:'CCCCCC'} }
-        }
+        border
     };
 }
 
@@ -507,13 +513,13 @@ window.downloadUserExcel = async (userId, userName) => {
             styleMap[chRow] = 'colHeader';
 
             let T = { sl:0,wu:0,ch:0,rd:0,hr:0,inst:0,ds:0, rdm:0,hrm:0,instm:0,svm:0,dsm:0,bonus:0,tot:0,ntm:0 };
-            const wStart = new Date(week.sunStr);
+            const [_sy,_sm,_sd] = week.sunStr.split('-').map(Number);
             const weekEntries = [];
 
             for (let i = 0; i < 7; i++) {
-                const cd  = new Date(wStart); cd.setDate(cd.getDate()+i);
-                const ds  = cd.toISOString().split('T')[0];
-                const lbl = `${DAY[i]} ${String(cd.getDate()).padStart(2,'0')}`;
+                const cd  = new Date(_sy, _sm-1, _sd+i);
+                const ds  = `${cd.getFullYear()}-${String(cd.getMonth()+1).padStart(2,'0')}-${String(cd.getDate()).padStart(2,'0')}`;
+                const lbl = `${DAY[cd.getDay()]} ${String(cd.getDate()).padStart(2,'0')}`;
                 const e   = week.days[ds] || getNRData(ds);
                 const dRow = dataArray.length;
                 const bonus= e.bonusTotal||0;
@@ -621,7 +627,17 @@ window.downloadUserExcel = async (userId, userName) => {
             } else if (type === 'total') {
                 for (let c=0;c<COLS;c++) {
                     const ref = `${colLetter(c)}${rNum}`;
-                    styleCell(ws, ref, { bold:true, fill:'D5E8F7', align:'center' });
+                    styleCell(ws, ref, { bold:true, fill:'D5E8F7', sz:11, align:'center' });
+                }
+                // Date column
+                styleCell(ws, `A${rNum}`, { bold:true, fill:'D5E8F7', align:'left', sz:12 });
+                // % column conditional
+                const totPctRef = `${colLetter(COLS-1)}${rNum}`;
+                if (ws[totPctRef]) {
+                    const pv = parseInt(String(ws[totPctRef].v))||0;
+                    const tf = pv >= 70 ? 'C6EFCE' : pv >= 50 ? 'FFEB9C' : 'FFC7CE';
+                    const tc = pv >= 70 ? '006100' : pv >= 50 ? '9C5700' : 'C0392B';
+                    styleCell(ws, totPctRef, { bold:true, fill:tf, fontColor:tc, sz:13, align:'center' });
                 }
             } else if (type === 'summary') {
                 for (let c=0;c<COLS;c++) {
@@ -632,35 +648,46 @@ window.downloadUserExcel = async (userId, userName) => {
                 // NR row — light red background
                 for (let c=0;c<COLS;c++) {
                     const ref = `${colLetter(c)}${rNum}`;
-                    styleCell(ws, ref, { fill:'FDE8E8', fontColor:'C0392B', align:'center' });
+                    styleCell(ws, ref, { fill:'FFC7CE', fontColor:'C0392B', align:'center' });
                 }
-                // Date col left aligned
-                if (ws[`A${rNum}`]) ws[`A${rNum}`].s.alignment.horizontal = 'left';
+                // Date col left aligned + bold
+                styleCell(ws, `A${rNum}`, { bold:true, fill:'FFC7CE', fontColor:'C0392B', align:'left' });
             } else if (type === 'data') {
-                // Date col
-                styleCell(ws, `A${rNum}`, { align:'left' });
-                // Score columns (M cols): C,E,G,I,K,M,O,Q = col indices 2,4,6,8,10,12,14,16
-                const scoreCols = [2,4,6,8,10,12,14,16];
-                for (let c=0;c<COLS;c++) {
+                // Date col — bold, left aligned
+                styleCell(ws, `A${rNum}`, { bold:true, align:'left' });
+                // Score columns (M cols): C,E,G,I,K,M,Q = col indices 2,4,6,8,10,12,16
+                // Also index 14 if L4 (notes marks)
+                const scoreCols = [2,4,6,8,10,12,16];
+                if (isL4) scoreCols.push(17);
+                for (let c=1;c<COLS;c++) {
                     const ref  = `${colLetter(c)}${rNum}`;
                     const cell = ws[ref];
-                    if (!cell) continue;
-                    if (scoreCols.includes(c) || c===17) {
-                        // Score cell — conditional color
+                    if (!cell) { styleCell(ws, ref, { align:'center' }); continue; }
+                    if (scoreCols.includes(c)) {
+                        // Score cell — conditional color like the app
                         const val = typeof cell.v === 'number' ? cell.v : parseFloat(cell.v)||0;
-                        const fill  = val >= 20 ? 'D5F5E3'   // green
-                                    : val >= 10 ? 'FEF9E7'   // yellow
+                        const fill  = val >= 20 ? 'C6EFCE'   // green (like app high-score)
+                                    : val >= 10 ? 'FFEB9C'   // yellow
                                     : val >=  0 ? 'FAD7A0'   // orange
-                                    :             'FADBD8';   // red
-                        const fColor = val < 0 ? 'C0392B' : '1A252F';
-                        styleCell(ws, ref, { fill, fontColor:fColor, align:'center' });
+                                    :             'FFC7CE';   // red (like app low-score)
+                        const fColor = val < 0 ? 'C0392B' : val >= 20 ? '006100' : val >= 10 ? '9C5700' : '1A252F';
+                        styleCell(ws, ref, { fill, fontColor:fColor, bold: val >= 20 || val < 0, align:'center' });
                     } else {
                         styleCell(ws, ref, { align:'center' });
                     }
                 }
-                // Total col (R=index 17) — bold
-                const totRef = `R${rNum}`;
-                if (ws[totRef]) ws[totRef].s.font.bold = true;
+                // Total col — bold
+                const totIdx = isL4 ? COLS-2 : COLS-2;
+                const totRef = `${colLetter(totIdx)}${rNum}`;
+                if (ws[totRef]) { ws[totRef].s.font.bold = true; ws[totRef].s.font.sz = 12; }
+                // % col — bold with conditional color
+                const pctRef = `${colLetter(COLS-1)}${rNum}`;
+                if (ws[pctRef]) {
+                    const pctVal = parseInt(String(ws[pctRef].v))||0;
+                    const pctFill = pctVal >= 70 ? 'C6EFCE' : pctVal >= 50 ? 'FFEB9C' : 'FFC7CE';
+                    const pctFC = pctVal >= 70 ? '006100' : pctVal >= 50 ? '9C5700' : 'C0392B';
+                    styleCell(ws, pctRef, { bold:true, fill:pctFill, fontColor:pctFC, align:'center' });
+                }
             }
         });
 
@@ -712,7 +739,7 @@ window.downloadMasterReport = async () => {
                 const wSun = new Date(sunStr);
                 for (let i=0;i<7;i++) {
                     const c  = new Date(wSun); c.setDate(c.getDate()+i);
-                    const ds = c.toISOString().split('T')[0];
+                    const ds = toLocalDS(c);
                     const en = entries.find(e=>e.date===ds);
                     tot += en ? en.score : -30;
                     if(en) masterWeekEnts.push({id:ds,sleepTime:en.sleepTime||''});
@@ -865,12 +892,18 @@ function initDashboard() {
 
     // Default tab based on role
     if (isAnyAdmin()) {
+        // All admins start at Home — scope handles what they see
         switchTab('admin-home');
-        // Hide notification bell for admins — they don't need sadhana reminders
+        // Hide notification bell for admins
         const nb = document.getElementById('sidebar-notif-btn');
         if (nb) nb.style.display = 'none';
         const sd = nb && nb.previousElementSibling;
         if (sd && sd.classList.contains('sidebar-divider')) sd.style.display = 'none';
+        // Hide Admin Mgmt button for non-SA (only SA can manage roles)
+        if (!isSuperAdmin()) {
+            const adminMgmtEl = document.getElementById('admin-sub-adminmgmt');
+            if (adminMgmtEl) adminMgmtEl.style.display = 'none';
+        }
     } else {
         // Setup form for users
         setupDateSelect();
@@ -898,6 +931,11 @@ window.switchTab = (t) => {
         const el = document.getElementById(id);
         if (el) el.classList.remove('active');
     });
+    // Reset mysadhana sub-tabs so progress chart doesn't leak when returning
+    document.querySelectorAll('#mysadhana-panel .subtab-panel').forEach(p => p.classList.remove('active'));
+    const defaultSadhanaTab = document.getElementById('sadhana-entry-sub');
+    if (defaultSadhanaTab) defaultSadhanaTab.classList.add('active');
+    document.querySelectorAll('#mysadhana-panel .subtab-btn').forEach((b,i) => b.classList.toggle('active', i===0));
     document.querySelectorAll('.tab-btn').forEach(b => b.classList.remove('active'));
 
     // admin tabs all use admin-panel with sub-sections
@@ -994,8 +1032,7 @@ async function loadUserWCR() {
 
         const weeks = [];
         for (let i=0;i<4;i++) {
-            const d=new Date(); d.setDate(d.getDate()-i*7);
-            weeks.push(getWeekInfo(d.toISOString().split('T')[0]));
+            weeks.push(getWeekInfo(localDateStr(i*7)));
         }
         weeks.reverse();
 
@@ -1029,7 +1066,7 @@ async function loadUserWCR() {
             const sSnap = allSnaps[rowIdx];
             // Use Map for O(1) date lookups instead of array.find()
             const entsMap = new Map();
-            sSnap.docs.forEach(d => entsMap.set(d.id, { score: d.data().totalScore||0, sleepTime: d.data().sleepTime||'' }));
+            sSnap.docs.forEach(d => entsMap.set(d.id, { score: d.data().totalScore||0, bonusTotal: d.data().bonusTotal||0, svcMins: d.data().serviceMinutes||0, sleepTime: d.data().sleepTime||'' }));
             const stripeBg = rowIdx % 2 === 0 ? '#ffffff' : '#f8fafc';
 
             const wcrIdx = window._wcrUserList.length;
@@ -1047,16 +1084,20 @@ async function loadUserWCR() {
                 <td class="comp-td comp-meta">${u.team||'-'}</td>`;
 
             weeks.forEach(w => {
-                let tot=0; const weekEnts=[]; const todayC = localDateStr(0);
+                let tot=0, svcMinsWeek=0; const weekEnts=[]; const todayC = localDateStr(0);
                 let curr=new Date(w.sunStr);
                 for (let i=0;i<7;i++) {
-                    const ds=curr.toISOString().split('T')[0];
+                    const ds=toLocalDS(curr);
                     if (ds < APP_START || ds > todayC) { curr.setDate(curr.getDate()+1); continue; }
                     const en = entsMap.get(ds);
-                    if (en) { tot += en.score; weekEnts.push({id:ds,sleepTime:en.sleepTime||''}); }
-                    else if (ds < todayC) { tot += -30; }
+                    if (en) {
+                        tot += en.score + (en.bonusTotal||0);
+                        svcMinsWeek += en.svcMins||0;
+                        weekEnts.push({id:ds,sleepTime:en.sleepTime||''});
+                    } else if (ds < todayC) { tot += -30; }
                     curr.setDate(curr.getDate()+1);
                 }
+                tot += calcServiceWeekly(svcMinsWeek, u.level||'Level-1');
                 const fd = fairDenominator(w.sunStr, weekEnts, u.level||'Level-1');
                 const pct = fd > 0 ? Math.round((tot/fd)*100) : 0;
                 const ps = pctStyle(pct);
@@ -1087,20 +1128,22 @@ async function loadUserWCR() {
 // ═══════════════════════════════════════════════════════════
 const APP_START = '2026-02-12';
 
-// Fair denominator: dailyMax × submitted/NR days in week (no future days)
+// Fair denominator: dailyMax × eligible days in week (no future days, no unsubmitted today)
+// NR days (explicit or missing past days) count in denominator — they penalize via lower score
 function fairDenominator(sunStr, weekData, level, joinedDate) {
     const dailyMax = getDailyMax(level || 'Level-1');
     const today = localDateStr(0);
     let days = 0;
     for (let i = 0; i < 7; i++) {
         const d = new Date(sunStr); d.setDate(d.getDate() + i);
-        const ds = d.toISOString().split('T')[0];
+        const ds = toLocalDS(d);
         if (ds < APP_START) continue;
         if (joinedDate && ds < joinedDate) continue;
         if (ds > today) break;
         if (ds === today) {
-            const submitted = weekData && weekData.find(e => e.id === ds && e.sleepTime !== 'NR');
-            if (!submitted) break;
+            // Count today only if ANY entry was submitted (including NR — they chose to mark it)
+            const hasEntry = weekData && weekData.find(e => e.id === ds);
+            if (!hasEntry) break;
         }
         days++;
     }
@@ -1195,7 +1238,7 @@ function loadReports(userId, containerId) {
                 const weeksList = [];
                 for (let i=0;i<4;i++) {
                     const d = new Date(); d.setDate(d.getDate()-i*7);
-                    weeksList.push(getWeekInfo(d.toISOString().split('T')[0]));
+                    weeksList.push(getWeekInfo(toLocalDS(d)));
                 }
                 const weeks = {};
                 weeksList.forEach(w => { weeks[w.label] = {range:w.label, sunStr:w.sunStr, data:[], total:0}; });
@@ -1210,7 +1253,7 @@ function loadReports(userId, containerId) {
                     const wk = weeks[wi.label];
                     let curr = new Date(wi.sunStr);
                     for (let i=0;i<7;i++) {
-                        const ds = curr.toISOString().split('T')[0];
+                        const ds = toLocalDS(curr);
                         if (ds>=APP_START && isPastDate(ds) && !wk.data.find(e=>e.id===ds)) {
                             const nr=getNRData(ds); wk.data.push(nr); wk.total+=nr.totalScore;
                         }
@@ -1381,11 +1424,11 @@ async function fetchChartData(userId, view) {
         const todayStr = localDateStr(0);
         for (let i = 11; i >= 0; i--) {
             const d  = new Date(); d.setDate(d.getDate() - i*7);
-            const wi = getWeekInfo(d.toISOString().split('T')[0]);
+            const wi = getWeekInfo(toLocalDS(d));
             if (wi.sunStr < APP_START) continue;
             let tot = 0; let curr = new Date(wi.sunStr);
             for (let j=0;j<7;j++) {
-                const ds = curr.toISOString().split('T')[0];
+                const ds = toLocalDS(curr);
                 if (ds > todayStr) { curr.setDate(curr.getDate()+1); continue; }
                 const en = allEntries.find(e=>e.date===ds);
                 if (ds === todayStr && !en) { curr.setDate(curr.getDate()+1); continue; }
@@ -1713,17 +1756,17 @@ window.filterReports = () => {
     });
 };
 async function loadAdminPanel() {
+    try {
     const tableBox        = document.getElementById('admin-comparative-reports-container');
     const usersList       = document.getElementById('admin-users-list');
     const inactiveCont    = document.getElementById('admin-inactive-container');
-    tableBox.innerHTML    = '<p style="color:#aaa;text-align:center;padding:20px;">Loading…</p>';
-    usersList.innerHTML   = '<p style="color:#aaa;text-align:center;padding:20px;">Loading…</p>';
+    if (tableBox) tableBox.innerHTML    = '<p style="color:#aaa;text-align:center;padding:20px;">Loading…</p>';
+    if (usersList) usersList.innerHTML   = '<p style="color:#aaa;text-align:center;padding:20px;">Loading…</p>';
     if (inactiveCont) inactiveCont.innerHTML = '';
 
     const weeks = [];
     for (let i=0;i<4;i++) {
-        const d=new Date(); d.setDate(d.getDate()-i*7);
-        weeks.push(getWeekInfo(d.toISOString().split('T')[0]));
+        weeks.push(getWeekInfo(localDateStr(i*7)));
     }
     weeks.reverse();
 
@@ -1769,7 +1812,6 @@ async function loadAdminPanel() {
 
     const searchInput = document.getElementById('admin-search-input');
     if (searchInput) searchInput.value = '';
-    if (catFilter) catFilter.value = '';
 
     // ── INACTIVE DEVOTEES SECTION ─────────────────────────
     // Calculate consecutive missing days (excluding today) per user
@@ -1801,7 +1843,7 @@ async function loadAdminPanel() {
         const sSnap = allSadhanaSnaps[idx];
         // Use Map for O(1) date lookups
         const entsMap = new Map();
-        sSnap.docs.forEach(d => entsMap.set(d.id, { score: d.data().totalScore||0, sleepTime: d.data().sleepTime||'' }));
+        sSnap.docs.forEach(d => entsMap.set(d.id, { score: d.data().totalScore||0, bonusTotal: d.data().bonusTotal||0, svcMins: d.data().serviceMinutes||0, sleepTime: d.data().sleepTime||'' }));
         userSadhanaCache.set(uDoc.id, Array.from(entsMap.entries()).map(([date, v]) => ({ date, ...v })));
 
         const submittedDates = new Set(sSnap.docs.map(d => d.id).filter(d => d >= APP_START));
@@ -1832,16 +1874,17 @@ async function loadAdminPanel() {
             <td class="comp-td comp-meta">${u.team||'-'}</td>
             <td class="comp-td comp-meta">${u.chantingCategory||'N/A'}</td>`;
         weeks.forEach(w => {
-            let tot=0; let curr=new Date(w.sunStr);
+            let tot=0, svcMinsWeek=0; let curr=new Date(w.sunStr);
             const weekEnts=[];
             const todayComp = localDateStr(0);
             for (let i=0;i<7;i++) {
-                const ds=curr.toISOString().split('T')[0];
+                const ds=toLocalDS(curr);
                 if (ds < APP_START) { curr.setDate(curr.getDate()+1); continue; }
                 if (ds > todayComp) { curr.setDate(curr.getDate()+1); continue; }
                 const en = entsMap.get(ds);
                 if (en) {
-                    tot += en.score;
+                    tot += en.score + (en.bonusTotal||0);
+                    svcMinsWeek += en.svcMins||0;
                     weekEnts.push({id:ds, sleepTime:en.sleepTime||'', score:en.score});
                 } else if (ds < todayComp) {
                     tot += -30; // past day NR (matches getNRData totalScore)
@@ -1849,6 +1892,7 @@ async function loadAdminPanel() {
                 // today not submitted — skip (not in fd either)
                 curr.setDate(curr.getDate()+1);
             }
+            tot += calcServiceWeekly(svcMinsWeek, u.level||'Level-1');
             const fd = fairDenominator(w.sunStr, weekEnts, u.level||'Level-1');
             const pct = Math.round((tot/fd)*100);
             const ps  = pctStyle(pct);
@@ -1958,6 +2002,17 @@ async function loadAdminPanel() {
         filterAdminUsers();
         filterInactiveUsers();
     });
+    } catch(err) {
+        console.error('loadAdminPanel error:', err);
+        adminPanelLoaded = false;
+        const tableBox = document.getElementById('admin-comparative-reports-container');
+        const usersList = document.getElementById('admin-users-list');
+        const inactiveCont = document.getElementById('admin-inactive-container');
+        const errMsg = '<p style="color:#dc2626;text-align:center;padding:20px;">Error loading: ' + (err.message||err) + '</p>';
+        if (tableBox) tableBox.innerHTML = errMsg;
+        if (usersList) usersList.innerHTML = errMsg;
+        if (inactiveCont) inactiveCont.innerHTML = errMsg;
+    }
 }
 
 // ── ADMIN MANAGEMENT ────────────────────────────────────────
@@ -3068,6 +3123,18 @@ window.openUAC = (uid, name, level, chanting, rounds, role, dept, team) => {
     document.getElementById('uac-name').textContent = name;
     document.getElementById('uac-sub').textContent  = `${level||''} · ${dept||''} · ${team||''} · ${chanting||''} · ${rounds||'?'} rounds`;
 
+    // Level change: superAdmin or deptAdmin in same dept
+    const levelWrap = document.getElementById('uac-level-wrap');
+    const levelSel  = document.getElementById('uac-level-sel');
+    if (levelWrap && levelSel) {
+        if (isSuperAdmin() || (isDeptAdmin() && dept === userProfile.department)) {
+            levelSel.value = level || '';
+            levelWrap.style.display = '';
+        } else {
+            levelWrap.style.display = 'none';
+        }
+    }
+
     // Role change: admin-only
     const roleWrap = document.getElementById('uac-role-wrap');
     if (isSuperAdmin() || (isDeptAdmin() && dept === userProfile.department)) {
@@ -3147,6 +3214,20 @@ window.uacRoleChange = async (sel) => {
         }
         showToast('✅ Role updated!', 'success');
         sel.value = '';
+        closeUAC();
+        adminPanelLoaded = false;
+        _userWCRLoaded = false;
+    } catch(e) {
+        alert('Error: ' + e.message);
+    }
+};
+
+window.uacLevelChange = async (sel) => {
+    const newLevel = sel.value; if (!newLevel) return;
+    if (!confirm(`Change ${_uacName}'s level to ${newLevel}?`)) { sel.value = ''; return; }
+    try {
+        await db.collection('users').doc(_uacUID).update({ level: newLevel });
+        showToast(`✅ Level changed to ${newLevel}!`, 'success');
         closeUAC();
         adminPanelLoaded = false;
         _userWCRLoaded = false;
@@ -3586,30 +3667,33 @@ async function loadLeaderboard(force) {
                 const entryMap = new Map();
                 weekSnaps[i].docs.forEach(d => entryMap.set(d.id, d.data()));
 
-                // Count all eligible days and apply NR penalty for missed ones
-                let totalScore = 0, totalDays = 0, filledDays = 0;
+                // Count all eligible days and apply NR penalty for missed/NR ones
+                let totalScore = 0, totalDays = 0, filledDays = 0, svcMinsWeek = 0;
                 dates.forEach(ds => {
                     if (ds < APP_START || ds < joinedDate) return;
                     if (ds > todayStr) return;
                     if (ds === todayStr) {
                         const entry = entryMap.get(ds);
-                        if (!entry || !entry.sleepTime || entry.sleepTime === 'NR') return; // today not filled yet — skip, don't penalize
+                        // Today: skip if no entry at all (not yet submitted). If NR, penalize.
+                        if (!entry || !entry.sleepTime) return;
                     }
                     totalDays++;
                     const entry = entryMap.get(ds);
                     if (entry && entry.sleepTime && entry.sleepTime !== 'NR') {
-                        totalScore += entry.totalScore ?? 0;
+                        totalScore += (entry.totalScore ?? 0) + (entry.bonusTotal || 0);
+                        svcMinsWeek += entry.serviceMinutes || 0;
                         filledDays++;
                     } else {
-                        totalScore += -30; // NR penalty
+                        totalScore += -30; // NR penalty (including explicit today NR)
                     }
                 });
+                totalScore += calcServiceWeekly(svcMinsWeek, u.level || 'Level-1');
                 if (totalDays === 0) return;
                 const pct = Math.round(totalScore * 100 / (totalDays * dailyMax));
                 rows.push({
                     uid: uDoc.id, name: u.name||'—', photo: u.photoURL||null,
                     level: u.level||'L1', score: totalScore, pct,
-                    days: filledDays + '/' + totalDays, rejected: false
+                    days: filledDays + '/' + dates.length, rejected: false
                 });
             });
         }
@@ -3622,20 +3706,21 @@ async function loadLeaderboard(force) {
             // Visual order: 2nd | 1st (center) | 3rd
             const order = top.length === 2 ? [top[1], top[0]] : [top[1], top[0], top[2]];
             const delays = top.length === 2 ? [0.4, 1.2] : [1.0, 1.6, 0.4];
-            const sizes = [58, 76, 48]; // rank2, rank1, rank3
-            const borders = ['#94a3b8', '#fbbf24', '#cd7f32']; // silver, gold, bronze
+            const sizes = [74, 96, 62]; // rank2, rank1, rank3
+            const borders = ['#94a3b8', '#fbbf24', '#cd7f32'];
+            const topMargins = ['28px', '0px', '48px']; // stepped heights: 2nd slightly lower, 3rd lowest
             podiumEl.innerHTML = order.map((r, i) => {
                 const rank = top.indexOf(r);
                 const medal = MEDALS[rank];
-                const sz = sizes[i] || 44;
+                const sz = sizes[i] || 54;
                 const borderColor = borders[i] || '#e5e7eb';
-                const confetti = rank === 0 ? `<span style="position:absolute;top:-8px;font-size:20px;animation:confettiBurst 1.2s ease ${delays[i]+0.4}s both;">🎉</span>` : '';
-                return `<div style="display:flex;flex-direction:column;align-items:center;gap:4px;min-width:70px;position:relative;animation:podiumRise 0.6s cubic-bezier(0.34,1.56,0.64,1) ${delays[i]}s both;">
+                const confetti = rank === 0 ? `<span style="position:absolute;top:-10px;font-size:24px;animation:confettiBurst 1.2s ease ${delays[i]+0.4}s both;">🎉</span>` : '';
+                return `<div style="display:flex;flex-direction:column;align-items:center;gap:5px;min-width:86px;position:relative;margin-top:${topMargins[i]};animation:podiumRise 0.6s cubic-bezier(0.34,1.56,0.64,1) ${delays[i]}s both;">
                     ${confetti}
                     <div class="av" style="width:${sz}px;height:${sz}px;border:3px solid ${borderColor};">${r.photo ? `<img src="${r.photo}">` : `<span class="av-init" style="font-size:${Math.round(sz*0.38)}px;">${(r.name||'?').split(' ').map(n=>n[0]).join('').substring(0,2).toUpperCase()}</span>`}</div>
-                    <span style="font-size:20px;">${medal}</span>
-                    <span style="font-size:11px;font-weight:700;color:#1A3C5E;text-align:center;max-width:80px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;">${r.name}</span>
-                    <span style="font-size:12px;font-weight:800;color:${r.pct>=70?'#16a34a':'#d97706'};">${r.score} pts</span>
+                    <span style="font-size:22px;">${medal}</span>
+                    <span style="font-size:12px;font-weight:700;color:#1A3C5E;text-align:center;max-width:90px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;">${r.name}</span>
+                    <span style="font-size:13px;font-weight:800;color:${r.pct>=70?'#16a34a':'#d97706'};">${r.score} pts</span>
                 </div>`;
             }).join('');
         } else if (podiumEl) { podiumEl.innerHTML = ''; }
@@ -3783,25 +3868,27 @@ async function loadAdminLeaderboard(force) {
                 const entryMap = new Map();
                 weekSnaps[i].docs.forEach(d => entryMap.set(d.id, d.data()));
 
-                let totalScore = 0, totalDays = 0, filledDays = 0;
+                let totalScore = 0, totalDays = 0, filledDays = 0, svcMinsWeek = 0;
                 dates.forEach(ds => {
                     if (ds < APP_START || ds < joinedDate || ds > todayStr) return;
                     if (ds === todayStr) {
                         const entry = entryMap.get(ds);
-                        if (!entry || !entry.sleepTime || entry.sleepTime === 'NR') return;
+                        if (!entry || !entry.sleepTime) return; // not submitted yet — skip
                     }
                     totalDays++;
                     const entry = entryMap.get(ds);
                     if (entry && entry.sleepTime && entry.sleepTime !== 'NR') {
-                        totalScore += entry.totalScore ?? 0;
+                        totalScore += (entry.totalScore ?? 0) + (entry.bonusTotal || 0);
+                        svcMinsWeek += entry.serviceMinutes || 0;
                         filledDays++;
                     } else {
                         totalScore += -30; // NR penalty
                     }
                 });
+                totalScore += calcServiceWeekly(svcMinsWeek, u.level || 'Level-1');
                 if (totalDays === 0) return;
                 const pct = Math.round(totalScore * 100 / (totalDays * dailyMax));
-                rows.push({ uid: uDoc.id, name: u.name||'—', photo: u.photoURL||null, level: u.level||'L1', dept: u.department||'', team: u.team||'', score: totalScore, pct, days: filledDays + '/' + totalDays, rejected: false });
+                rows.push({ uid: uDoc.id, name: u.name||'—', photo: u.photoURL||null, level: u.level||'L1', dept: u.department||'', team: u.team||'', score: totalScore, pct, days: filledDays + '/' + dates.length, rejected: false });
             });
         }
 
@@ -3812,20 +3899,21 @@ async function loadAdminLeaderboard(force) {
             const top = rows.slice(0, Math.min(3, rows.length));
             const order = top.length === 2 ? [top[1], top[0]] : [top[1], top[0], top[2]];
             const delays = top.length === 2 ? [0.4, 1.2] : [1.0, 1.6, 0.4];
-            const sizes = [58, 76, 48];
+            const sizes = [74, 96, 62];
             const borders = ['#94a3b8', '#fbbf24', '#cd7f32'];
+            const topMargins = ['28px', '0px', '48px'];
             podiumEl.innerHTML = order.map((r, i) => {
                 const rank = top.indexOf(r);
                 const medal = MEDALS[rank];
-                const sz = sizes[i] || 44;
+                const sz = sizes[i] || 54;
                 const borderColor = borders[i] || '#e5e7eb';
-                const confetti = rank === 0 ? `<span style="position:absolute;top:-8px;font-size:20px;animation:confettiBurst 1.2s ease ${delays[i]+0.4}s both;">🎉</span>` : '';
-                return `<div style="display:flex;flex-direction:column;align-items:center;gap:4px;min-width:70px;position:relative;animation:podiumRise 0.6s cubic-bezier(0.34,1.56,0.64,1) ${delays[i]}s both;">
+                const confetti = rank === 0 ? `<span style="position:absolute;top:-10px;font-size:24px;animation:confettiBurst 1.2s ease ${delays[i]+0.4}s both;">🎉</span>` : '';
+                return `<div style="display:flex;flex-direction:column;align-items:center;gap:5px;min-width:86px;position:relative;margin-top:${topMargins[i]};animation:podiumRise 0.6s cubic-bezier(0.34,1.56,0.64,1) ${delays[i]}s both;">
                     ${confetti}
                     <div class="av" style="width:${sz}px;height:${sz}px;border:3px solid ${borderColor};">${r.photo ? `<img src="${r.photo}">` : `<span class="av-init" style="font-size:${Math.round(sz*0.38)}px;">${(r.name||'?').split(' ').map(n=>n[0]).join('').substring(0,2).toUpperCase()}</span>`}</div>
-                    <span style="font-size:20px;">${medal}</span>
-                    <span style="font-size:11px;font-weight:700;color:#1A3C5E;text-align:center;max-width:80px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;">${r.name}</span>
-                    <span style="font-size:12px;font-weight:800;color:${r.pct>=70?'#16a34a':'#d97706'};">${r.score} pts</span>
+                    <span style="font-size:22px;">${medal}</span>
+                    <span style="font-size:12px;font-weight:700;color:#1A3C5E;text-align:center;max-width:90px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;">${r.name}</span>
+                    <span style="font-size:13px;font-weight:800;color:${r.pct>=70?'#16a34a':'#d97706'};">${r.score} pts</span>
                 </div>`;
             }).join('');
         } else if (podiumEl) { podiumEl.innerHTML = ''; }
@@ -4237,13 +4325,26 @@ function computePerformers(filteredDocs, sadhanaCache) {
     renderPerformers();
 }
 
+// Read perf selector value from whichever panel is currently active
+function _perfRead(baseId) {
+    const isAdmin = document.getElementById('admin-panel')?.classList.contains('active');
+    const primaryId = isAdmin ? 'sa-' + baseId : baseId;
+    const fallbackId = isAdmin ? baseId : 'sa-' + baseId;
+    const val = document.getElementById(primaryId)?.value ?? document.getElementById(fallbackId)?.value ?? null;
+    return val;
+}
+
+// Sync a value to both perf selectors
+function _perfSync(baseId, val) {
+    [baseId, 'sa-' + baseId].forEach(id => { const el = document.getElementById(id); if (el) el.value = String(val); });
+}
+
 function initPerfDropdowns() {
     const now = new Date();
     const curYear = now.getFullYear();
     const curMon = now.getMonth();
     const startYear = parseInt(APP_START.substring(0,4));
 
-    // Year options
     let yearOpts = '';
     for (let y = curYear; y >= startYear; y--) yearOpts += `<option value="${y}">${y}</option>`;
     ['perf-year-sel','sa-perf-year-sel'].forEach(id => {
@@ -4263,13 +4364,15 @@ function populateMonthDropdown() {
     const startYear = parseInt(APP_START.substring(0,4)), startMon = parseInt(APP_START.substring(5,7)) - 1;
     const fromMon = _perfYear === startYear ? startMon : 0;
     const toMon = _perfYear === curYear ? curMon : 11;
+    // Clamp _perfMonth to valid range for the selected year
+    _perfMonth = Math.min(toMon, Math.max(fromMon, _perfMonth));
     let opts = '';
     for (let m = toMon; m >= fromMon; m--) opts += `<option value="${m}">${months[m]}</option>`;
     ['perf-month-sel','sa-perf-month-sel'].forEach(id => {
         const el = document.getElementById(id);
-        if (el) { el.innerHTML = opts; el.value = String(_perfMonth <= toMon && _perfMonth >= fromMon ? _perfMonth : toMon); }
+        if (el) { el.innerHTML = opts; el.value = String(_perfMonth); }
     });
-    _perfMonth = parseInt(document.getElementById('perf-month-sel')?.value ?? document.getElementById('sa-perf-month-sel')?.value ?? curMon);
+    // _perfMonth already set above — no re-read needed
 }
 
 function populateWeekDropdown() {
@@ -4284,7 +4387,17 @@ function populateWeekDropdown() {
         const sat = new Date(y, m-1, d+6);
         opts += `<option value="${i}">${fmt(sun)} – ${fmt(sat)}</option>`;
     });
-    const defaultIdx = Math.max(0, weeks.length - 2);
+    // Default to the week that contains today; for past months default to last week
+    const todayDs = localDateStr(0);
+    let defaultIdx = weeks.length - 1;
+    for (let i = 0; i < weeks.length; i++) {
+        const [wy,wm,wd] = weeks[i].split('-').map(Number);
+        const sat = new Date(wy, wm-1, wd+6);
+        const satDs = toLocalDS(sat);
+        if (satDs >= todayDs) { defaultIdx = i; break; } // first week whose end >= today
+    }
+    // Clamp to last valid week if all weeks are in the future (shouldn't happen)
+    defaultIdx = Math.max(0, Math.min(defaultIdx, weeks.length - 1));
     ['perf-week-sel','sa-perf-week-sel'].forEach(id => {
         const el = document.getElementById(id);
         if (el) { el.innerHTML = opts; el.value = String(defaultIdx); el.style.display = _perfTab === 'weekly' ? '' : 'none'; }
@@ -4306,24 +4419,29 @@ function getWeeksInMonth(monthStart, monthEnd) {
 }
 
 window.onPerfYearChange = () => {
-    _perfYear = parseInt(document.getElementById('perf-year-sel')?.value || document.getElementById('sa-perf-year-sel')?.value);
-    // Sync both selectors
-    ['perf-year-sel','sa-perf-year-sel'].forEach(id => { const el = document.getElementById(id); if (el) el.value = String(_perfYear); });
+    const raw = _perfRead('perf-year-sel');
+    if (raw == null) return;
+    _perfYear = parseInt(raw);
+    _perfSync('perf-year-sel', _perfYear);
     populateMonthDropdown();
     populateWeekDropdown();
     renderPerformers();
 };
 
 window.onPerfMonthChange = () => {
-    _perfMonth = parseInt(document.getElementById('perf-month-sel')?.value || document.getElementById('sa-perf-month-sel')?.value);
-    ['perf-month-sel','sa-perf-month-sel'].forEach(id => { const el = document.getElementById(id); if (el) el.value = String(_perfMonth); });
+    const raw = _perfRead('perf-month-sel');
+    if (raw == null) return;
+    _perfMonth = parseInt(raw);
+    _perfSync('perf-month-sel', _perfMonth);
     populateWeekDropdown();
     renderPerformers();
 };
 
 window.onPerfWeekChange = () => {
-    _perfWeekIdx = parseInt(document.getElementById('perf-week-sel')?.value || document.getElementById('sa-perf-week-sel')?.value) || 0;
-    ['perf-week-sel','sa-perf-week-sel'].forEach(id => { const el = document.getElementById(id); if (el) el.value = String(_perfWeekIdx); });
+    const raw = _perfRead('perf-week-sel');
+    if (raw == null) return;
+    _perfWeekIdx = parseInt(raw);
+    _perfSync('perf-week-sel', _perfWeekIdx);
     renderPerformers();
 };
 
@@ -4378,7 +4496,7 @@ function renderPerformers() {
                 let tot = 0, days = 0;
                 for (let i = 0; i < 7; i++) {
                     const [wy,wm,wd] = weekSun.split('-').map(Number); const d = new Date(wy,wm-1,wd+i);
-                    const ds = d.toISOString().split('T')[0];
+                    const ds = toLocalDS(d);
                     if (ds < APP_START || ds < (u.joinedDate||APP_START) || ds > todayStr) continue;
                     if (ds === todayStr) { const e = u.ents.find(en => en.date === ds); if (!e) continue; }
                     days++;
