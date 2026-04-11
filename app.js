@@ -402,8 +402,6 @@ function getDailyMax(level) {
 // ═══════════════════════════════════════════════════════════
 function xlsxSave(wb, filename) {
     try {
-        XLSX.writeFile(wb, filename);
-    } catch (e) {
         const arr  = XLSX.write(wb, { bookType:'xlsx', type:'array' });
         const blob = new Blob([arr], { type:'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet' });
         const url  = URL.createObjectURL(blob);
@@ -411,21 +409,24 @@ function xlsxSave(wb, filename) {
         a.href = url; a.download = filename; a.style.display = 'none';
         document.body.appendChild(a); a.click();
         setTimeout(() => { document.body.removeChild(a); URL.revokeObjectURL(url); }, 2500);
+    } catch (e) {
+        console.error('Excel save error:', e);
+        alert('Download failed: ' + e.message);
     }
 }
 
-// Helper: set cell style (bold, fill, font color, alignment, border)
+// Helper: set cell style using xlsx-js-style (same API as xlsx@0.18 + style support)
 function styleCell(ws, cellRef, opts = {}) {
     if (!ws[cellRef]) ws[cellRef] = { v:'', t:'s' };
     const border = {
-        top:    { style:'thin', color:{rgb:'999999'} },
-        bottom: { style:'thin', color:{rgb:'999999'} },
-        left:   { style:'thin', color:{rgb:'999999'} },
-        right:  { style:'thin', color:{rgb:'999999'} }
+        top:    { style:'thin', color:{rgb:'BFBFBF'} },
+        bottom: { style:'thin', color:{rgb:'BFBFBF'} },
+        left:   { style:'thin', color:{rgb:'BFBFBF'} },
+        right:  { style:'thin', color:{rgb:'BFBFBF'} }
     };
     ws[cellRef].s = {
-        font:      { bold: opts.bold||false, color: opts.fontColor ? {rgb: opts.fontColor} : {rgb:'1A252F'}, sz: opts.sz||11, name:'Segoe UI' },
-        fill:      opts.fill ? { fgColor: {rgb: opts.fill}, patternType:'solid' } : undefined,
+        font:      { bold: opts.bold||false, color:{rgb: opts.fontColor||'1A252F'}, sz: opts.sz||11, name:'Calibri' },
+        fill:      { patternType:'solid', fgColor: {rgb: opts.fill||'FFFFFF'} },
         alignment: { horizontal: opts.align||'center', vertical:'center', wrapText: false },
         border
     };
@@ -470,9 +471,11 @@ window.downloadUserExcel = async (userId, userName) => {
 
         const sortedWeeks = Object.keys(weeksData).sort((a,b) => b.localeCompare(a));
         const DAY = ['Sun','Mon','Tue','Wed','Thu','Fri','Sat'];
-        // Columns: Date,Bed,M,Wake,M,Chant,M,Pathan(m),M,Hearing(m),M,Instrument(m),M,Seva(m),Seva Notes,DaySleep(m),M,Bonus,Total,%
-        // L4 extra: Notes(m)
-        const COLS = isL4 ? 22 : 21;
+        // Columns (0-indexed): 0=Date,1=Bed,2=M,3=Wake,4=M,5=Chant,6=M,
+        //   7=Read(m),8=M,9=Hear(m),10=M,11=Inst(m),12=M,
+        //   13=Seva(m),14=SevaText,15=DaySleep(m),16=M,17=Bonus,18=Total,19=%
+        // L4 inserts Notes(m) at index 17, shifting Bonus→18, Total→19, %→20
+        const COLS = isL4 ? 21 : 20;
 
         // ── PROFILE HEADER ────────────────────────────────
         const today = new Date().toLocaleDateString('en-GB',{day:'2-digit',month:'short',year:'numeric'});
@@ -587,8 +590,8 @@ window.downloadUserExcel = async (userId, userName) => {
         const merges = [];
         // Profile title spans all columns
         merges.push({s:{r:0,c:0}, e:{r:0,c:COLS-1}});
-        // Profile rows: label in col 0, value merged cols 1-18
-        for (let r=2;r<=6;r++) merges.push({s:{r,c:1}, e:{r,c:COLS-1}});
+        // Profile rows: label in col 0, value merged cols 1 onward (rows 2-9)
+        for (let r=2;r<=9;r++) merges.push({s:{r,c:1}, e:{r,c:COLS-1}});
 
         // Week & summary row merges
         Object.entries(styleMap).forEach(([rStr, type]) => {
@@ -603,10 +606,15 @@ window.downloadUserExcel = async (userId, userName) => {
         // Profile title
         styleCell(ws, 'A1', { bold:true, fill:'1A3C5E', fontColor:'FFFFFF', sz:13, align:'center' });
 
-        // Profile label cells (col A, rows 3-7)
-        for (let r=2;r<=6;r++) {
-            styleCell(ws, `A${r+1}`, { bold:true, fill:'EBF3FB', align:'left' });
-            styleCell(ws, `B${r+1}`, { align:'left' });
+        // Profile label cells (col A, rows 3-10) + value cells
+        for (let r=2;r<=9;r++) {
+            styleCell(ws, `A${r+1}`, { bold:true, fill:'1A3C5E', fontColor:'FFFFFF', align:'left' });
+            for (let c=1;c<COLS;c++) styleCell(ws, `${colLetter(c)}${r+1}`, { fill:'EBF3FB', align:'left' });
+        }
+        // Blank rows (row 2 and row 11) — light fill with border
+        for (let c=0;c<COLS;c++) {
+            styleCell(ws, `${colLetter(c)}2`, { fill:'1A3C5E' });
+            styleCell(ws, `${colLetter(c)}11`, { fill:'F0F4F8' });
         }
 
         // Data rows styling
@@ -676,10 +684,8 @@ window.downloadUserExcel = async (userId, userName) => {
                         styleCell(ws, ref, { align:'center' });
                     }
                 }
-                // Total col — bold
-                const totIdx = isL4 ? COLS-2 : COLS-2;
-                const totRef = `${colLetter(totIdx)}${rNum}`;
-                if (ws[totRef]) { ws[totRef].s.font.bold = true; ws[totRef].s.font.sz = 12; }
+                // Total col (COLS-2) — re-apply with bold + larger font
+                styleCell(ws, `${colLetter(COLS-2)}${rNum}`, { bold:true, sz:12, align:'center' });
                 // % col — bold with conditional color
                 const pctRef = `${colLetter(COLS-1)}${rNum}`;
                 if (ws[pctRef]) {
@@ -691,8 +697,8 @@ window.downloadUserExcel = async (userId, userName) => {
             }
         });
 
-        // Freeze top 8 rows (profile) + column A
-        ws['!freeze'] = { xSplit:1, ySplit:PROFILE_ROWS, topLeftCell:'B9' };
+        // Freeze profile block + column A
+        ws['!freeze'] = { xSplit:1, ySplit:PROFILE_ROWS, topLeftCell:`B${PROFILE_ROWS+1}` };
 
         const wb = XLSX.utils.book_new();
         XLSX.utils.book_append_sheet(wb, ws, 'Sadhana_Weekly');
@@ -758,34 +764,39 @@ window.downloadMasterReport = async () => {
         const hCols = rows[0].length;
         for (let c = 0; c < hCols; c++) {
             const ref = `${colLetter(c)}1`;
-            styleCell(ws, ref, { bold:true, fill:'1A3C5E', fontColor:'FFFFFF', sz:11, align: c===0 ? 'left' : 'center' });
+            styleCell(ws, ref, { bold:true, fill:'1A3C5E', fontColor:'FFFFFF', sz:11, align: c < 5 ? 'left' : 'center' });
         }
 
-        // Style data rows with matching colors
+        // TEXT_COLS: Name(0), Level(1), Department(2), Team(3), Chanting(4) — 5 info cols before week data
+        const TEXT_COLS = 5;
+        // Style data rows
         for (let r = 1; r < rows.length; r++) {
             const stripeBg = r % 2 === 0 ? 'F8FAFC' : 'FFFFFF';
-            // Name, level, chanting cols
-            for (let c = 0; c < 3; c++) {
+            // Info columns (text)
+            for (let c = 0; c < TEXT_COLS; c++) {
                 const ref = `${colLetter(c)}${r+1}`;
                 styleCell(ws, ref, { fill: stripeBg, align:'left', bold: c===0 });
             }
-            // Week pct cols
-            for (let c = 3; c < rows[r].length; c++) {
+            // Week % columns
+            for (let c = TEXT_COLS; c < rows[r].length; c++) {
                 const ref  = `${colLetter(c)}${r+1}`;
                 const cell = ws[ref];
-                if (!cell) continue;
-                const raw  = parseInt(String(cell.v).replace('%','').replace('(','').replace(')','')) || 0;
+                if (!cell) { styleCell(ws, ref, { fill: stripeBg, align:'center' }); continue; }
+                const raw   = parseInt(String(cell.v).replace('%','').replace('(','').replace(')','')) || 0;
                 const isNeg = String(cell.v).includes('(');
-                const pct  = isNeg ? -Math.abs(raw) : raw;
-                let fill = stripeBg, fontColor = '1A252F'; let bold = false;
-                if (pct < 0)   { fill = 'FFFDE7'; fontColor = 'B91C1C'; bold = true; }
-                else if (pct < 20) { fill = 'FFFDE7'; fontColor = 'B91C1C'; bold = true; }
-                else if (pct >= 70){ fontColor = '15803D'; bold = true; }
+                const pct   = isNeg ? -Math.abs(raw) : raw;
+                let fill = stripeBg, fontColor = '1A252F', bold = false;
+                if (pct < 0)        { fill = 'FFC7CE'; fontColor = 'C0392B'; bold = true; }
+                else if (pct < 20)  { fill = 'FFC7CE'; fontColor = 'C0392B'; bold = true; }
+                else if (pct < 50)  { fill = 'FFEB9C'; fontColor = '9C5700'; bold = false; }
+                else if (pct < 70)  { fill = 'FFEB9C'; fontColor = '9C5700'; bold = true; }
+                else                { fill = 'C6EFCE'; fontColor = '006100'; bold = true; }
                 styleCell(ws, ref, { fill, fontColor, bold, align:'center' });
             }
         }
 
-        ws['!cols'] = [{ wch:22 }, { wch:16 }, { wch:12 }, ...Array(allWeeks.length).fill({ wch:18 })];
+        ws['!cols'] = [{ wch:24 }, { wch:12 }, { wch:14 }, { wch:14 }, { wch:16 }, ...Array(allWeeks.length).fill({ wch:16 })];
+        ws['!freeze'] = { xSplit: TEXT_COLS, ySplit: 1, topLeftCell: `${colLetter(TEXT_COLS)}2` };
 
         const wb = XLSX.utils.book_new();
         XLSX.utils.book_append_sheet(wb, ws, 'Master_Report');
@@ -4664,30 +4675,116 @@ window.downloadDeptExcel = async (dept) => {
                 weekMap[wi.label].data.push({ id: d.id, ...d.data() });
             });
 
+            const DCOLS = 12;
             const rows = [
-                ['Name', u.name], ['Level', level], ['Dept', dept], ['Team', u.team||''],
-                ['Chanting', u.chantingCategory||''], ['Rounds', u.exactRounds||''], [],
-                ['Date','Sleep','Wake','Chant','Read','Hear','Inst','DaySleep','Service','Notes','Total','%']
+                [`${dept} — SADHANA REPORT`, ...Array(DCOLS-1).fill('')],
+                ['Name',     u.name||'',               ...Array(DCOLS-2).fill('')],
+                ['Level',    level,                    ...Array(DCOLS-2).fill('')],
+                ['Team',     u.team||'',               ...Array(DCOLS-2).fill('')],
+                ['Chanting', u.chantingCategory||'',   ...Array(DCOLS-2).fill('')],
+                ['Rounds',   u.exactRounds||'',        ...Array(DCOLS-2).fill('')],
+                Array(DCOLS).fill(''),
+                ['Date','Sleep','Wake','Chant','Read(m)','Hear(m)','Inst(m)','DaySleep(m)','Service(m)','Notes(m)','Total','%']
             ];
+            const PROF_ROWS = 8; // rows 0-7 are profile/header block
 
             Object.values(weekMap).sort((a,b) => b.sunStr.localeCompare(a.sunStr)).forEach(wk => {
+                rows.push([`── WEEK: ${wk.label.replace('_',' ')} ──`, ...Array(DCOLS-1).fill('')]);
                 wk.data.sort((a,b) => a.id.localeCompare(b.id)).forEach(e => {
                     rows.push([
                         e.id, e.sleepTime||'NR', e.wakeupTime||'NR', e.chantingTime||'NR',
                         e.readingMinutes||0, e.hearingMinutes||0, e.instrumentMinutes||0,
                         e.daySleepMinutes||0, e.serviceMinutes||0, e.notesMinutes||0,
-                        e.totalScore||0, (e.dayPercent||0)+'%'
+                        (e.totalScore||0)+(e.bonusTotal||0), (e.dayPercent||0)+'%'
                     ]);
                 });
                 const wkSvcMins = wk.data.reduce((s,e) => s + (e.serviceMinutes||0), 0);
-                const wkTotal = wk.data.reduce((s,e) => s + (e.totalScore||0) + (e.bonusTotal||0), 0) + calcServiceWeekly(wkSvcMins, level);
-                const wkFD = wk.data.length * dailyMax;
-                rows.push(['WEEK TOTAL','','','','','','','','','', wkTotal, Math.round(wkTotal*100/wkFD)+'%']);
-                rows.push([]);
+                const wkTotal   = wk.data.reduce((s,e) => s + (e.totalScore||0) + (e.bonusTotal||0), 0) + calcServiceWeekly(wkSvcMins, level);
+                const wkFD      = wk.data.length * dailyMax + 25;
+                const wkPct     = wk.data.length ? Math.round(wkTotal*100/wkFD) : 0;
+                rows.push(['WEEK TOTAL','','','','','','','','','', wkTotal, wkPct+'%']);
+                rows.push(Array(DCOLS).fill(''));
             });
 
             const ws = XLSX.utils.aoa_to_sheet(rows);
-            ws['!cols'] = Array(12).fill({ wch: 12 });
+
+            // ── MERGES ───────────────────────────────────────
+            const dMerges = [{ s:{r:0,c:0}, e:{r:0,c:DCOLS-1} }]; // title
+            for (let r=1;r<=5;r++) dMerges.push({s:{r,c:1}, e:{r,c:DCOLS-1}}); // profile values
+            // Week header rows only — merge all cols (WEEK TOTAL NOT merged so score/% are visible)
+            for (let r=PROF_ROWS;r<rows.length;r++) {
+                const cell0 = String(rows[r]?.[0]||'');
+                if (cell0.startsWith('──')) dMerges.push({s:{r,c:0},e:{r,c:DCOLS-1}});
+            }
+            ws['!merges'] = dMerges;
+
+            // ── STYLES ───────────────────────────────────────
+            // Title row
+            for (let c=0;c<DCOLS;c++) styleCell(ws, `${colLetter(c)}1`, { bold:true, fill:'1A3C5E', fontColor:'FFFFFF', sz:13, align:'center' });
+
+            // Profile rows (rows 1-5 = Excel rows 2-6)
+            for (let r=1;r<=5;r++) {
+                styleCell(ws, `A${r+1}`, { bold:true, fill:'2E86C1', fontColor:'FFFFFF', align:'left' });
+                for (let c=1;c<DCOLS;c++) styleCell(ws, `${colLetter(c)}${r+1}`, { fill:'EBF3FB', align:'left' });
+            }
+            // Blank row (row 6 = Excel row 7)
+            for (let c=0;c<DCOLS;c++) styleCell(ws, `${colLetter(c)}7`, { fill:'F0F4F8' });
+
+            // Column headers (row 7 = Excel row 8)
+            for (let c=0;c<DCOLS;c++) styleCell(ws, `${colLetter(c)}8`, { bold:true, fill:'2E86C1', fontColor:'FFFFFF', sz:10, align:'center' });
+
+            // Data rows
+            let stripeToggle = 0;
+            for (let r=PROF_ROWS;r<rows.length;r++) {
+                const row    = rows[r];
+                const rNum   = r+1;
+                const isBlank = !row || row.every(v=>v==='');
+                if (isBlank) { for(let c=0;c<DCOLS;c++) styleCell(ws,`${colLetter(c)}${rNum}`,{fill:'FFFFFF'}); continue; }
+
+                const cell0  = String(row[0]||'');
+                const isWeekHdr  = cell0.startsWith('──');
+                const isWeekTot  = cell0 === 'WEEK TOTAL';
+                const isNR       = row[1] === 'NR';
+
+                if (isWeekHdr) {
+                    for(let c=0;c<DCOLS;c++) styleCell(ws,`${colLetter(c)}${rNum}`,{ bold:true, fill:'1A3C5E', fontColor:'FFFFFF', sz:11, align:'center' });
+                    stripeToggle = 0;
+                } else if (isWeekTot) {
+                    // Style all cols with blue-tint; then override total and % cols with conditional color
+                    for(let c=0;c<DCOLS;c++) styleCell(ws,`${colLetter(c)}${rNum}`,{ bold:true, fill:'D5E8F7', fontColor:'1A3C5E', sz:11, align:'center' });
+                    styleCell(ws,`A${rNum}`,{ bold:true, fill:'D5E8F7', fontColor:'1A3C5E', align:'left', sz:11 });
+                    // Total col (DCOLS-2) — bold score value
+                    styleCell(ws,`${colLetter(DCOLS-2)}${rNum}`,{ bold:true, fill:'D5E8F7', fontColor:'1A3C5E', sz:12, align:'center' });
+                    // % col (DCOLS-1) — conditional color
+                    const pctRef = `${colLetter(DCOLS-1)}${rNum}`;
+                    const pv = ws[pctRef] ? parseInt(String(ws[pctRef].v))||0 : 0;
+                    const tf = pv>=70?'C6EFCE':pv>=50?'FFEB9C':'FFC7CE';
+                    const tc = pv>=70?'006100':pv>=50?'9C5700':'C0392B';
+                    styleCell(ws,pctRef,{ bold:true, fill:tf, fontColor:tc, sz:12, align:'center' });
+                } else {
+                    // Regular data row
+                    stripeToggle++;
+                    const bg = isNR ? 'FFC7CE' : (stripeToggle%2===0?'F8FAFC':'FFFFFF');
+                    const fc = isNR ? 'C0392B' : '1A252F';
+                    styleCell(ws,`A${rNum}`,{ bold:true, fill:bg, fontColor:fc, align:'left' });
+                    for(let c=1;c<DCOLS-1;c++) styleCell(ws,`${colLetter(c)}${rNum}`,{ fill:bg, fontColor:fc, align:'center' });
+                    // % col conditional
+                    const pctRef = `${colLetter(DCOLS-1)}${rNum}`;
+                    if (ws[pctRef] && !isNR) {
+                        const pv = parseInt(ws[pctRef].v)||0;
+                        const tf = pv>=70?'C6EFCE':pv>=50?'FFEB9C':'FFC7CE';
+                        const tc = pv>=70?'006100':pv>=50?'9C5700':'C0392B';
+                        styleCell(ws,pctRef,{ bold:true, fill:tf, fontColor:tc, align:'center' });
+                    } else if (ws[pctRef]) {
+                        styleCell(ws,pctRef,{ bold:true, fill:'FFC7CE', fontColor:'C0392B', align:'center' });
+                    }
+                    // Total col — re-style as bold
+                    styleCell(ws,`${colLetter(DCOLS-2)}${rNum}`,{ bold:true, fill:bg, fontColor:fc, sz:12, align:'center' });
+                }
+            }
+
+            ws['!cols'] = [{ wch:14 }, { wch:9 }, { wch:9 }, { wch:9 }, { wch:8 }, { wch:8 }, { wch:8 }, { wch:10 }, { wch:10 }, { wch:9 }, { wch:8 }, { wch:7 }];
+            ws['!freeze'] = { xSplit:1, ySplit:PROF_ROWS, topLeftCell:`B${PROF_ROWS+1}` };
             const sheetName = (u.name||'User').substring(0,31);
             XLSX.utils.book_append_sheet(wb, ws, sheetName);
         }
