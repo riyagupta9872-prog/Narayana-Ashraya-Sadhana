@@ -716,7 +716,7 @@ window.downloadMasterReport = async () => {
         const allSnaps = await Promise.all(filteredDocs.map(uDoc => uDoc.ref.collection('sadhana').get()));
         filteredDocs.forEach((uDoc, i) => {
             const u = uDoc.data();
-            const entries = allSnaps[i].docs.map(d=>({date:d.id, score:d.data().totalScore||0}));
+            const entries = allSnaps[i].docs.map(d=>({date:d.id, score:d.data().totalScore||0, bonus:d.data().bonusTotal||0, svcMins:d.data().serviceMinutes||0, sleepTime:d.data().sleepTime||''}));
             entries.forEach(en => {
                 const wi = getWeekInfo(en.date);
                 weekMap.set(wi.sunStr, wi.label);
@@ -735,15 +735,16 @@ window.downloadMasterReport = async () => {
         userData.forEach(({user,entries}) => {
             const row = [user.name, user.level||'Level-1', user.department||'-', user.team||'-', user.chantingCategory||'N/A'];
             allWeeks.forEach(({ sunStr }) => {
-                let tot = 0; const masterWeekEnts = [];
+                let tot = 0, svcMinsWeek = 0; const masterWeekEnts = [];
                 const wSun = new Date(sunStr);
                 for (let i=0;i<7;i++) {
                     const c  = new Date(wSun); c.setDate(c.getDate()+i);
                     const ds = toLocalDS(c);
                     const en = entries.find(e=>e.date===ds);
-                    tot += en ? en.score : -30;
-                    if(en) masterWeekEnts.push({id:ds,sleepTime:en.sleepTime||''});
+                    if (en) { tot += en.score + (en.bonus||0); svcMinsWeek += en.svcMins||0; masterWeekEnts.push({id:ds,sleepTime:en.sleepTime||''}); }
+                    else { tot += -30; }
                 }
+                tot += calcServiceWeekly(svcMinsWeek, user.level||'Level-1');
                 const mfd = fairDenominator(wSun, masterWeekEnts);
                 const pct = Math.round((tot/mfd)*100);
                 row.push(pct < 0 ? `(${Math.abs(pct)}%)` : `${pct}%`);
@@ -1066,7 +1067,7 @@ async function loadUserWCR() {
             const sSnap = allSnaps[rowIdx];
             // Use Map for O(1) date lookups instead of array.find()
             const entsMap = new Map();
-            sSnap.docs.forEach(d => entsMap.set(d.id, { score: d.data().totalScore||0, bonusTotal: d.data().bonusTotal||0, svcMins: d.data().serviceMinutes||0, sleepTime: d.data().sleepTime||'' }));
+            sSnap.docs.forEach(d => entsMap.set(d.id, { score: d.data().totalScore||0, bonus: d.data().bonusTotal||0, svcMins: d.data().serviceMinutes||0, sleepTime: d.data().sleepTime||'' }));
             const stripeBg = rowIdx % 2 === 0 ? '#ffffff' : '#f8fafc';
 
             const wcrIdx = window._wcrUserList.length;
@@ -1091,7 +1092,7 @@ async function loadUserWCR() {
                     if (ds < APP_START || ds > todayC) { curr.setDate(curr.getDate()+1); continue; }
                     const en = entsMap.get(ds);
                     if (en) {
-                        tot += en.score + (en.bonusTotal||0);
+                        tot += en.score + (en.bonus||0);
                         svcMinsWeek += en.svcMins||0;
                         weekEnts.push({id:ds,sleepTime:en.sleepTime||''});
                     } else if (ds < todayC) { tot += -30; }
@@ -1113,7 +1114,7 @@ async function loadUserWCR() {
         const perfCache = new Map();
         filtered.forEach((uDoc, i) => {
             const sSnap = allSnaps[i];
-            perfCache.set(uDoc.id, sSnap.docs.map(d => ({ date: d.id, score: d.data().totalScore||0 })));
+            perfCache.set(uDoc.id, sSnap.docs.map(d => ({ date: d.id, score: d.data().totalScore||0, bonus: d.data().bonusTotal||0, svcMins: d.data().serviceMinutes||0 })));
         });
         computePerformers(filtered, perfCache);
     } catch(err) {
@@ -1147,7 +1148,7 @@ function fairDenominator(sunStr, weekData, level, joinedDate) {
         }
         days++;
     }
-    return Math.max(days, 1) * dailyMax;
+    return Math.max(days, 1) * dailyMax + 25;
 }
 
 // ─── Bonus popup ──────────────────────────────────────────
@@ -1269,10 +1270,11 @@ function loadReports(userId, containerId) {
                     const svcScore   = calcServiceWeekly(svcTotal, level);
                     const weekBonus  = wk.data.reduce((s,e)=>s+(e.bonusTotal||0),0);
 
-                    const wkFD    = fairDenominator(wi.sunStr, wk.data, level);
-                    const wkTotal = wk.total + svcScore + weekBonus;
-                    const wkPct   = Math.round((wkTotal / wkFD) * 100);
-                    const wkColor = wkTotal < 0 ? '#dc2626' : wkPct < 30 ? '#d97706' : '#16a34a';
+                    const wkFD       = fairDenominator(wi.sunStr, wk.data, level);
+                    const daySubtotal = wk.total + weekBonus; // sum of daily totals (incl bonus)
+                    const wkTotal    = daySubtotal + svcScore;
+                    const wkPct      = Math.round((wkTotal / wkFD) * 100);
+                    const wkColor    = wkTotal < 0 ? '#dc2626' : wkPct < 30 ? '#d97706' : '#16a34a';
                     const div     = document.createElement('div'); div.className='week-card';
                     const bodyId  = containerId.replace(/[^a-zA-Z0-9]/g,'') + '-wb-' + wi.sunStr;
 
@@ -1362,8 +1364,8 @@ function loadReports(userId, containerId) {
                     div.innerHTML = `
                         <div class="week-header" onclick="document.getElementById('${bodyId}').classList.toggle('open')">
                             <span style="white-space:nowrap;">📅 ${wk.range.replace('_',' ')}</span>
-                            <span style="display:flex;align-items:center;gap:8px;flex-wrap:nowrap;">
-                                <span style="font-size:11px;color:#6b7280;white-space:nowrap;">🛠️ ${svcTotal}min→${svcScore>=0?'+':''}${svcScore}</span>
+                            <span style="display:flex;align-items:center;gap:6px;flex-wrap:nowrap;">
+                                ${svcScore !== 0 ? `<span style="font-size:11px;color:#6b7280;white-space:nowrap;">${daySubtotal} 🛠️${svcScore>=0?'+':''}${svcScore} =</span>` : ''}
                                 <strong style="white-space:nowrap;color:${wkColor}">${wkTotal} / ${wkFD} (${wkPct}%) ▼</strong>
                             </span>
                         </div>
@@ -1397,13 +1399,14 @@ let myChartInstance    = null;
 let modalChartInstance = null;
 let progressModalUserId   = null;
 let progressModalUserName = null;
+let progressModalUserLevel = null;
 
-async function fetchChartData(userId, view) {
+async function fetchChartData(userId, view, level) {
     const snap = await db.collection('users').doc(userId).collection('sadhana')
         .orderBy(firebase.firestore.FieldPath.documentId()).get();
     const allEntries = [];
     snap.forEach(doc => {
-        if (doc.id >= APP_START) allEntries.push({ date: doc.id, score: doc.data().totalScore || 0 });
+        if (doc.id >= APP_START) allEntries.push({ date: doc.id, score: doc.data().totalScore || 0, bonus: doc.data().bonusTotal || 0, svcMins: doc.data().serviceMinutes || 0 });
     });
 
     if (view === 'daily') {
@@ -1414,7 +1417,7 @@ async function fetchChartData(userId, view) {
             const entry = allEntries.find(e => e.date === ds);
             if (i === 0 && !entry) continue; // skip today if not yet submitted
             labels.push(ds.split('-').slice(1).reverse().join('/'));
-            data.push(entry ? entry.score : -35);
+            data.push(entry ? entry.score + (entry.bonus||0) : -35);
         }
         return { labels, data, label:'Daily Score', max:160, color:'#3498db' };
     }
@@ -1422,19 +1425,21 @@ async function fetchChartData(userId, view) {
     if (view === 'weekly') {
         const labels = [], data = [];
         const todayStr = localDateStr(0);
+        const chartLevel = level || 'Level-1';
         for (let i = 11; i >= 0; i--) {
             const d  = new Date(); d.setDate(d.getDate() - i*7);
             const wi = getWeekInfo(toLocalDS(d));
             if (wi.sunStr < APP_START) continue;
-            let tot = 0; let curr = new Date(wi.sunStr);
+            let tot = 0, svcMinsWeek = 0; let curr = new Date(wi.sunStr);
             for (let j=0;j<7;j++) {
                 const ds = toLocalDS(curr);
                 if (ds > todayStr) { curr.setDate(curr.getDate()+1); continue; }
                 const en = allEntries.find(e=>e.date===ds);
                 if (ds === todayStr && !en) { curr.setDate(curr.getDate()+1); continue; }
-                tot += en ? en.score : -30;
+                if (en) { tot += en.score + (en.bonus||0); svcMinsWeek += en.svcMins||0; } else { tot += -30; }
                 curr.setDate(curr.getDate()+1);
             }
+            tot += calcServiceWeekly(svcMinsWeek, chartLevel);
             labels.push(wi.label.split('_')[0].split(' to ')[0]);
             data.push(tot);
         }
@@ -1445,7 +1450,7 @@ async function fetchChartData(userId, view) {
         const monthMap = {};
         allEntries.forEach(en => {
             const ym = en.date.substring(0,7);
-            monthMap[ym] = (monthMap[ym]||0) + en.score;
+            monthMap[ym] = (monthMap[ym]||0) + en.score + (en.bonus||0);
         });
         const sorted = Object.keys(monthMap).sort();
         const labels = sorted.map(ym => {
@@ -1495,7 +1500,7 @@ function renderChart(canvasId, chartData, existingInstance) {
 }
 
 async function loadMyProgressChart(view) {
-    const data = await fetchChartData(currentUser.uid, view);
+    const data = await fetchChartData(currentUser.uid, view, userProfile?.level || 'Level-1');
     myChartInstance = renderChart('my-progress-chart', data, myChartInstance);
 }
 
@@ -1511,7 +1516,9 @@ window.openProgressModal = async (userId, userName) => {
     document.getElementById('progress-modal-title').textContent = `📈 ${userName} — Progress`;
     document.getElementById('progress-modal').classList.remove('hidden');
     document.querySelectorAll('#progress-modal-tabs .chart-tab-btn').forEach((b,i) => b.classList.toggle('active', i===0));
-    const data = await fetchChartData(userId, 'daily');
+    // Fetch the user's level so weekly chart includes service weekly correctly
+    try { const uSnap = await db.collection('users').doc(userId).get(); progressModalUserLevel = uSnap.data()?.level || 'Level-1'; } catch(e) { progressModalUserLevel = 'Level-1'; }
+    const data = await fetchChartData(userId, 'daily', progressModalUserLevel);
     modalChartInstance = renderChart('modal-progress-chart', data, modalChartInstance);
 };
 
@@ -1523,7 +1530,7 @@ window.closeProgressModal = () => {
 window.setModalChartView = async (view, btn) => {
     document.querySelectorAll('#progress-modal-tabs .chart-tab-btn').forEach(b => b.classList.remove('active'));
     btn.classList.add('active');
-    const data = await fetchChartData(progressModalUserId, view);
+    const data = await fetchChartData(progressModalUserId, view, progressModalUserLevel || 'Level-1');
     modalChartInstance = renderChart('modal-progress-chart', data, modalChartInstance);
 };
 
@@ -1843,7 +1850,7 @@ async function loadAdminPanel() {
         const sSnap = allSadhanaSnaps[idx];
         // Use Map for O(1) date lookups
         const entsMap = new Map();
-        sSnap.docs.forEach(d => entsMap.set(d.id, { score: d.data().totalScore||0, bonusTotal: d.data().bonusTotal||0, svcMins: d.data().serviceMinutes||0, sleepTime: d.data().sleepTime||'' }));
+        sSnap.docs.forEach(d => entsMap.set(d.id, { score: d.data().totalScore||0, bonus: d.data().bonusTotal||0, svcMins: d.data().serviceMinutes||0, sleepTime: d.data().sleepTime||'' }));
         userSadhanaCache.set(uDoc.id, Array.from(entsMap.entries()).map(([date, v]) => ({ date, ...v })));
 
         const submittedDates = new Set(sSnap.docs.map(d => d.id).filter(d => d >= APP_START));
@@ -1883,7 +1890,7 @@ async function loadAdminPanel() {
                 if (ds > todayComp) { curr.setDate(curr.getDate()+1); continue; }
                 const en = entsMap.get(ds);
                 if (en) {
-                    tot += en.score + (en.bonusTotal||0);
+                    tot += en.score + (en.bonus||0);
                     svcMinsWeek += en.svcMins||0;
                     weekEnts.push({id:ds, sleepTime:en.sleepTime||'', score:en.score});
                 } else if (ds < todayComp) {
@@ -2288,6 +2295,10 @@ window.submitEditSadhana = async () => {
 
         closeEditModal();
         alert(`✅ Sadhana updated!\nNew Score: ${total} (${dayPercent}%)`);
+        // Refresh admin panel so WCR table and performers ring reflect the edit
+        adminPanelLoaded = false;
+        _userWCRLoaded = false;
+        loadAdminPanel();
     } catch (err) {
         console.error('Edit save error:', err);
         alert('❌ Save failed: ' + err.message);
@@ -2524,6 +2535,7 @@ window.toggleRejectEntry = async (userId, dateStr, isCurrentlyRejected) => {
                 rejected: false,
                 totalScore: d.originalTotalScore ?? d.totalScore,
                 dayPercent: d.originalDayPercent ?? d.dayPercent,
+                bonusTotal: d.originalBonusTotal ?? d.bonusTotal ?? 0,
                 revokedAt: firebase.firestore.FieldValue.serverTimestamp(),
                 revokedBy: userProfile.name
             });
@@ -2544,8 +2556,10 @@ window.toggleRejectEntry = async (userId, dateStr, isCurrentlyRejected) => {
                 rejectionReason: reason.trim(),
                 originalTotalScore: d.totalScore ?? 0,
                 originalDayPercent: d.dayPercent ?? 0,
+                originalBonusTotal: d.bonusTotal ?? 0,
                 totalScore: -50,
-                dayPercent: -31
+                dayPercent: -31,
+                bonusTotal: 0
             });
             showToast('🚫 Entry rejected!', 'success');
         } catch(err) { showToast('❌ ' + err.message, 'error'); }
@@ -3359,7 +3373,8 @@ async function renderActivityAnalysis(uid, period) {
         });
 
         const n = validDocs.length;
-        const totalScore = validDocs.reduce((sum, d) => sum + (d.data().totalScore ?? 0), 0);
+        const totalSvcMins = validDocs.reduce((s, d) => s + (d.data().serviceMinutes||0), 0);
+        const totalScore = validDocs.reduce((sum, d) => sum + (d.data().totalScore ?? 0) + (d.data().bonusTotal ?? 0), 0) + calcServiceWeekly(totalSvcMins, level);
         const weekPct = Math.round(totalScore * 100 / (n * dailyMax));
         const weekScores = {};
         actKeys.forEach(k => { weekScores[k] = Math.round(totals[k] * 10) / 10; });
@@ -3519,7 +3534,7 @@ async function loadHomePanel(weekOffset) {
 
     // Count ALL eligible days — apply NR penalty for missed ones
     const joinedDate = userProfile?.joinedDate || APP_START;
-    let totalScore = 0, totalDays = 0, filledDays = 0;
+    let totalScore = 0, totalDays = 0, filledDays = 0, svcMinsWeek = 0;
     const actTotals = {};
     actKeys.forEach(k => actTotals[k] = 0);
 
@@ -3529,7 +3544,8 @@ async function loadHomePanel(weekOffset) {
         totalDays++;
         if (filledSet.has(ds)) {
             const data = entryMap.get(ds);
-            totalScore += data.totalScore || 0;
+            totalScore += (data.totalScore || 0) + (data.bonusTotal || 0);
+            svcMinsWeek += data.serviceMinutes || 0;
             filledDays++;
             const sc = data.scores || {};
             actKeys.forEach(k => { actTotals[k] += (sc[k] ?? 0); });
@@ -3537,8 +3553,9 @@ async function loadHomePanel(weekOffset) {
             totalScore += -30; // NR penalty
         }
     });
+    totalScore += calcServiceWeekly(svcMinsWeek, level);
 
-    const weekPct = totalDays > 0 ? Math.round(totalScore * 100 / (totalDays * dailyMax)) : 0;
+    const weekPct = totalDays > 0 ? Math.round(totalScore * 100 / (totalDays * dailyMax + 25)) : 0;
 
     // Ring chart with animation
     const ringColor = weekPct >= 70 ? '#16a34a' : weekPct >= 50 ? '#d97706' : '#dc2626';
@@ -3644,7 +3661,8 @@ async function loadLeaderboard(force) {
                 const dailyMax = getDailyMax(u.level || 'Level-1');
                 if (snap.exists && snap.data().sleepTime && snap.data().sleepTime !== 'NR') {
                     const d = snap.data();
-                    rows.push({ uid: uDoc.id, name: u.name||'—', photo: u.photoURL||null, level: u.level||'L1', score: d.totalScore??0, pct: Math.round((d.totalScore??0)*100/dailyMax), rejected: !!d.rejected });
+                    const score = (d.totalScore??0) + (d.bonusTotal||0);
+                    rows.push({ uid: uDoc.id, name: u.name||'—', photo: u.photoURL||null, level: u.level||'L1', score, pct: Math.round(score*100/dailyMax), rejected: !!d.rejected });
                 } else {
                     // NR — penalize
                     rows.push({ uid: uDoc.id, name: u.name||'—', photo: u.photoURL||null, level: u.level||'L1', score: -30, pct: Math.round(-30*100/dailyMax), rejected: false, isNR: true });
@@ -3689,7 +3707,7 @@ async function loadLeaderboard(force) {
                 });
                 totalScore += calcServiceWeekly(svcMinsWeek, u.level || 'Level-1');
                 if (totalDays === 0) return;
-                const pct = Math.round(totalScore * 100 / (totalDays * dailyMax));
+                const pct = Math.round(totalScore * 100 / (totalDays * dailyMax + 25));
                 rows.push({
                     uid: uDoc.id, name: u.name||'—', photo: u.photoURL||null,
                     level: u.level||'L1', score: totalScore, pct,
@@ -3846,7 +3864,8 @@ async function loadAdminLeaderboard(force) {
                 const dailyMax = getDailyMax(u.level || 'Level-1');
                 if (snap.exists && snap.data().sleepTime && snap.data().sleepTime !== 'NR') {
                     const d = snap.data();
-                    rows.push({ uid: uDoc.id, name: u.name||'—', photo: u.photoURL||null, level: u.level||'L1', dept: u.department||'', team: u.team||'', score: d.totalScore??0, pct: Math.round((d.totalScore??0)*100/dailyMax), rejected: !!d.rejected });
+                    const score = (d.totalScore??0) + (d.bonusTotal||0);
+                    rows.push({ uid: uDoc.id, name: u.name||'—', photo: u.photoURL||null, level: u.level||'L1', dept: u.department||'', team: u.team||'', score, pct: Math.round(score*100/dailyMax), rejected: !!d.rejected });
                 } else {
                     rows.push({ uid: uDoc.id, name: u.name||'—', photo: u.photoURL||null, level: u.level||'L1', dept: u.department||'', team: u.team||'', score: -30, pct: Math.round(-30*100/dailyMax), rejected: false, isNR: true });
                 }
@@ -3887,7 +3906,7 @@ async function loadAdminLeaderboard(force) {
                 });
                 totalScore += calcServiceWeekly(svcMinsWeek, u.level || 'Level-1');
                 if (totalDays === 0) return;
-                const pct = Math.round(totalScore * 100 / (totalDays * dailyMax));
+                const pct = Math.round(totalScore * 100 / (totalDays * dailyMax + 25));
                 rows.push({ uid: uDoc.id, name: u.name||'—', photo: u.photoURL||null, level: u.level||'L1', dept: u.department||'', team: u.team||'', score: totalScore, pct, days: filledDays + '/' + dates.length, rejected: false });
             });
         }
@@ -4029,10 +4048,11 @@ async function renderSAFillTable(weekOffset) {
         });
 
         const dailyMax = getDailyMax(u.level || 'Level-1');
-        let totalScore = 0;
-        if (snap) snap.docs.forEach(d => { const dd = d.data(); if (dd.sleepTime && dd.sleepTime !== 'NR') totalScore += (dd.totalScore||0); });
+        let totalScore = 0, svcMinsWeek = 0;
+        if (snap) snap.docs.forEach(d => { const dd = d.data(); if (dd.sleepTime && dd.sleepTime !== 'NR') { totalScore += (dd.totalScore||0) + (dd.bonusTotal||0); svcMinsWeek += (dd.serviceMinutes||0); } });
+        totalScore += calcServiceWeekly(svcMinsWeek, u.level||'Level-1');
         totalScore += missed * -30;
-        const pct = totalDays > 0 ? Math.round(totalScore * 100 / (totalDays * dailyMax)) : 0;
+        const pct = totalDays > 0 ? Math.round(totalScore * 100 / (totalDays * dailyMax + 25)) : 0;
 
         rows.push({ uid: uDoc.id, name: u.name, dept: u.department||'-', team: u.team||'-', level: u.level||'L1', chanting: u.chantingCategory||'', rounds: u.exactRounds||'?', filled, missed, totalDays, pct });
     });
@@ -4287,6 +4307,7 @@ window.submitRejectAction = async () => {
                 rejected: false,
                 totalScore: data.originalTotalScore ?? data.totalScore,
                 dayPercent: data.originalDayPercent ?? data.dayPercent,
+                bonusTotal: data.originalBonusTotal ?? data.bonusTotal ?? 0,
                 revokedAt: firebase.firestore.FieldValue.serverTimestamp(),
                 revokedBy: userProfile.name,
                 revocationReason: remarks
@@ -4300,12 +4321,17 @@ window.submitRejectAction = async () => {
                 rejectionReason: remarks,
                 originalTotalScore: data.totalScore ?? 0,
                 originalDayPercent: data.dayPercent ?? 0,
+                originalBonusTotal: data.bonusTotal ?? 0,
                 totalScore: -50,
-                dayPercent: -31
+                dayPercent: -31,
+                bonusTotal: 0
             });
             showToast('🚫 Entry rejected with -50 penalty!', 'success');
         }
         closeRejectModal();
+        adminPanelLoaded = false;
+        _userWCRLoaded = false;
+        loadAdminPanel();
     } catch(e) { showToast('Error: ' + e.message, 'error'); }
 };
 
@@ -4477,34 +4503,42 @@ function renderPerformers() {
         if (_perfTab === 'weekly') {
             // Single week
             const weekSun = weeks[Math.min(_perfWeekIdx, weeks.length-1)] || weeks[0];
-            let tot = 0, days = 0;
+            let tot = 0, svcMinsWeek = 0;
+            const weekEnts = [];
+            const [pwy,pwm,pwd] = weekSun.split('-').map(Number);
             for (let i = 0; i < 7; i++) {
-                const [wy,wm,wd] = weekSun.split('-').map(Number); const d = new Date(wy,wm-1,wd+i);
-                const ds = `${d.getFullYear()}-${String(d.getMonth()+1).padStart(2,'0')}-${String(d.getDate()).padStart(2,'0')}`;
-                if (ds < APP_START || ds < (u.joinedDate||APP_START) || ds > todayStr) continue;
-                if (ds === todayStr) { const e = u.ents.find(en => en.date === ds); if (!e) continue; }
-                days++;
+                const d = new Date(pwy,pwm-1,pwd+i);
+                const ds = toLocalDS(d);
+                if (ds < APP_START || ds > todayStr) continue;
                 const e = u._entsMap ? u._entsMap.get(ds) : u.ents.find(en => en.date === ds);
-                tot += e ? (e.score||0) : -30;
+                if (e) { tot += (e.score||0) + (e.bonus||0); svcMinsWeek += (e.svcMins||0); weekEnts.push({ id: ds }); }
+                else if (ds < todayStr) { tot += -30; }
+                // today not submitted — skip (matches WCR behavior)
             }
-            const dailyMax = getDailyMax(u.level);
-            pct = days > 0 ? Math.round(tot * 100 / (days * dailyMax)) : 0;
+            tot += calcServiceWeekly(svcMinsWeek, u.level);
+            const fd = fairDenominator(weekSun, weekEnts, u.level);
+            pct = Math.round(tot * 100 / fd);
         } else {
             // Monthly — average of all weeks
             let sum = 0, count = 0;
             weeks.forEach(weekSun => {
-                let tot = 0, days = 0;
+                let tot = 0, svcMinsWeek = 0, eligibleDays = 0;
+                const weekEnts = [];
+                const [mwy,mwm,mwd] = weekSun.split('-').map(Number);
                 for (let i = 0; i < 7; i++) {
-                    const [wy,wm,wd] = weekSun.split('-').map(Number); const d = new Date(wy,wm-1,wd+i);
+                    const d = new Date(mwy,mwm-1,mwd+i);
                     const ds = toLocalDS(d);
-                    if (ds < APP_START || ds < (u.joinedDate||APP_START) || ds > todayStr) continue;
-                    if (ds === todayStr) { const e = u.ents.find(en => en.date === ds); if (!e) continue; }
-                    days++;
+                    if (ds < APP_START || ds > todayStr) continue;
+                    eligibleDays++;
                     const e = u._entsMap ? u._entsMap.get(ds) : u.ents.find(en => en.date === ds);
-                    tot += e ? (e.score||0) : -30;
+                    if (e) { tot += (e.score||0) + (e.bonus||0); svcMinsWeek += (e.svcMins||0); weekEnts.push({ id: ds }); }
+                    else if (ds < todayStr) { tot += -30; }
+                    // today not submitted — skip (matches WCR behavior)
                 }
-                const dailyMax = getDailyMax(u.level);
-                if (days > 0) { sum += Math.round(tot * 100 / (days * dailyMax)); count++; }
+                tot += calcServiceWeekly(svcMinsWeek, u.level);
+                const fd = fairDenominator(weekSun, weekEnts, u.level);
+                const weekPct = Math.round(tot * 100 / fd);
+                if (eligibleDays > 0) { sum += weekPct; count++; }
             });
             pct = count > 0 ? Math.round(sum / count) : 0;
         }
@@ -4645,7 +4679,8 @@ window.downloadDeptExcel = async (dept) => {
                         e.totalScore||0, (e.dayPercent||0)+'%'
                     ]);
                 });
-                const wkTotal = wk.data.reduce((s,e) => s + (e.totalScore||0), 0);
+                const wkSvcMins = wk.data.reduce((s,e) => s + (e.serviceMinutes||0), 0);
+                const wkTotal = wk.data.reduce((s,e) => s + (e.totalScore||0) + (e.bonusTotal||0), 0) + calcServiceWeekly(wkSvcMins, level);
                 const wkFD = wk.data.length * dailyMax;
                 rows.push(['WEEK TOTAL','','','','','','','','','', wkTotal, Math.round(wkTotal*100/wkFD)+'%']);
                 rows.push([]);
